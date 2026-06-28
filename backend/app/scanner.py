@@ -7,8 +7,34 @@ from typing import Any
 
 
 RISK_ORDER = {"none": 0, "low": 1, "medium": 2, "high": 3}
-LIFECYCLE_SCRIPTS = {"preinstall", "install", "postinstall", "prepare", "prepublish"}
-LOCKFILES = {"package-lock.json", "yarn.lock", "pnpm-lock.yaml"}
+MANIFESTS = {"package.json", "requirements.txt", "pyproject.toml"}
+LIFECYCLE_SCRIPTS = {
+    "preinstall",
+    "install",
+    "postinstall",
+    "prepare",
+    "prepack",
+    "postpack",
+    "prepublish",
+}
+LOCKFILES = {
+    "package-lock.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "poetry.lock",
+    "uv.lock",
+    "requirements.lock.txt",
+}
+SECRET_FILE_NAMES = {
+    ".env",
+    ".env.local",
+    ".env.production",
+    ".npmrc",
+    ".pypirc",
+    "id_rsa",
+    "id_ed25519",
+}
+SECRET_FILE_SUFFIXES = {".pem", ".key"}
 EXECUTABLE_EXTENSIONS = {
     ".bat": ("medium", "Batch script found. Review before running because it can execute commands on Windows."),
     ".cmd": ("medium", "Command script found. Review before running because it can execute commands on Windows."),
@@ -35,9 +61,17 @@ PATTERNS = {
 
 def scan_project(project_path: Path) -> dict[str, Any]:
     findings: list[dict[str, str]] = []
+    manifests: list[str] = []
+    lockfiles: list[str] = []
+    lifecycle_scripts: list[dict[str, str]] = []
+    secret_files: list[str] = []
 
     for current_root, dirs, files in os.walk(project_path):
-        dirs[:] = [name for name in dirs if name.lower() not in SKIP_DIRS]
+        dirs[:] = [
+            name
+            for name in dirs
+            if name.lower() not in SKIP_DIRS and not _is_reparse_point_or_symlink(Path(current_root) / name)
+        ]
         root_path = Path(current_root)
 
         for filename in files:
@@ -45,23 +79,33 @@ def scan_project(project_path: Path) -> dict[str, Any]:
             relative_path = str(file_path.relative_to(project_path))
             lower_name = filename.lower()
             suffix = file_path.suffix.lower()
+            is_secret_file = _is_secret_file(lower_name, suffix)
+
+            if lower_name in MANIFESTS:
+                manifests.append(relative_path)
+
+            if lower_name in LOCKFILES:
+                lockfiles.append(relative_path)
+
+            if is_secret_file:
+                secret_files.append(relative_path)
+                findings.append(
+                    _finding(
+                        relative_path,
+                        "secret-looking-file",
+                        "high",
+                        "Secret-looking file found. Review before sharing or running tools.",
+                    )
+                )
 
             if lower_name == "package.json":
-                findings.extend(_scan_package_json(file_path, relative_path))
+                package_findings, package_lifecycle_scripts = _scan_package_json(file_path, relative_path)
+                findings.extend(package_findings)
+                lifecycle_scripts.extend(package_lifecycle_scripts)
 
             if suffix in EXECUTABLE_EXTENSIONS:
                 severity, explanation = EXECUTABLE_EXTENSIONS[suffix]
                 findings.append(_finding(relative_path, "executable-or-script-file", severity, explanation))
-
-            if lower_name == ".env":
-                findings.append(
-                    _finding(
-                        relative_path,
-                        "environment-file",
-                        "high",
-                        "Environment file found. Review for secrets before sharing or running tools.",
-                    )
-                )
 
             if lower_name in LOCKFILES:
                 findings.append(
@@ -73,12 +117,21 @@ def scan_project(project_path: Path) -> dict[str, Any]:
                     )
                 )
 
-            findings.extend(_scan_text_patterns(file_path, relative_path))
+            if not is_secret_file:
+                findings.extend(_scan_text_patterns(file_path, relative_path))
 
-    return {"overall_risk": _overall_risk(findings), "findings": findings}
+    return {
+        "overall_risk": _overall_risk(findings, manifests, lockfiles, lifecycle_scripts, secret_files),
+        "findings": findings,
+        "manifests": sorted(manifests),
+        "lockfiles": sorted(lockfiles),
+        "lifecycleScripts": sorted(lifecycle_scripts, key=lambda script: (script["path"], script["script"])),
+        "secretFiles": sorted(secret_files),
+        "zone": _infer_zone(project_path),
+    }
 
 
-def _scan_package_json(file_path: Path, relative_path: str) -> list[dict[str, str]]:
+def _scan_package_json(file_path: Path, relative_path: str) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     try:
         data = json.loads(file_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
@@ -89,14 +142,16 @@ def _scan_package_json(file_path: Path, relative_path: str) -> list[dict[str, st
                 "medium",
                 "package.json could not be parsed. Review it manually before installing dependencies.",
             )
-        ]
+        ], []
 
     scripts = data.get("scripts")
     if not isinstance(scripts, dict):
-        return []
+        return [], []
 
     findings: list[dict[str, str]] = []
+    lifecycle_scripts: list[dict[str, str]] = []
     for script_name in sorted(LIFECYCLE_SCRIPTS.intersection(scripts.keys())):
+        lifecycle_scripts.append({"path": relative_path, "script": script_name})
         findings.append(
             _finding(
                 relative_path,
@@ -105,7 +160,7 @@ def _scan_package_json(file_path: Path, relative_path: str) -> list[dict[str, st
                 f"package.json defines a '{script_name}' lifecycle script. Review it before installing dependencies.",
             )
         )
-    return findings
+    return findings, lifecycle_scripts
 
 
 def _scan_text_patterns(file_path: Path, relative_path: str) -> list[dict[str, str]]:
@@ -134,11 +189,52 @@ def _finding(path: str, finding_type: str, severity: str, explanation: str) -> d
     }
 
 
-def _overall_risk(findings: list[dict[str, str]]) -> str:
-    if not findings:
+def _overall_risk(
+    findings: list[dict[str, str]],
+    manifests: list[str],
+    lockfiles: list[str],
+    lifecycle_scripts: list[dict[str, str]],
+    secret_files: list[str],
+) -> str:
+    if secret_files or lifecycle_scripts or _has_severity(findings, "high"):
+        return "high"
+    if manifests and not lockfiles:
+        return "medium"
+    if _has_severity(findings, "medium"):
+        return "medium"
+    if lockfiles:
+        return "low"
+    if not findings and not manifests and not lockfiles:
         return "none"
-    highest = max(RISK_ORDER[finding["severity"]] for finding in findings)
+
+    highest = max((RISK_ORDER.get(finding["severity"], 0) for finding in findings), default=0)
     for name, value in RISK_ORDER.items():
         if value == highest:
             return name
     return "none"
+
+
+def _has_severity(findings: list[dict[str, str]], severity: str) -> bool:
+    return any(finding["severity"] == severity for finding in findings)
+
+
+def _is_secret_file(lower_name: str, suffix: str) -> bool:
+    return lower_name in SECRET_FILE_NAMES or suffix in SECRET_FILE_SUFFIXES
+
+
+def _infer_zone(project_path: Path) -> str:
+    zones = {"trusted": "Trusted", "untrusted": "Untrusted", "quarantine": "Quarantine"}
+    for part in project_path.parts:
+        zone = zones.get(part.lower())
+        if zone:
+            return zone
+    return "Unknown"
+
+
+def _is_reparse_point_or_symlink(path: Path) -> bool:
+    try:
+        if path.is_symlink():
+            return True
+        return bool(path.stat(follow_symlinks=False).st_file_attributes & 0x400)
+    except (AttributeError, OSError):
+        return False
