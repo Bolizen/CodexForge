@@ -44,6 +44,7 @@ EXECUTABLE_EXTENSIONS = {
     ".dll": ("high", "Windows library file found. Review its origin before loading or executing related software."),
 }
 SKIP_DIRS = {".git", "node_modules", "dist", "build", ".venv", "venv", "__pycache__"}
+IGNORE_FILE_NAME = ".codexforgeignore"
 MAX_TEXT_BYTES = 1024 * 1024
 
 PATTERNS = {
@@ -65,6 +66,7 @@ def scan_project(project_path: Path) -> dict[str, Any]:
     lockfiles: list[str] = []
     lifecycle_scripts: list[dict[str, str]] = []
     secret_files: list[str] = []
+    ignore_patterns = _load_ignore_patterns(project_path)
 
     for current_root, dirs, files in os.walk(project_path):
         dirs[:] = [
@@ -76,7 +78,10 @@ def scan_project(project_path: Path) -> dict[str, Any]:
 
         for filename in files:
             file_path = root_path / filename
-            relative_path = str(file_path.relative_to(project_path))
+            relative_path = _relative_path(file_path, project_path)
+            if relative_path in ignore_patterns:
+                continue
+
             lower_name = filename.lower()
             suffix = file_path.suffix.lower()
             is_secret_file = _is_secret_file(lower_name, suffix)
@@ -178,6 +183,26 @@ def _scan_text_patterns(file_path: Path, relative_path: str) -> list[dict[str, s
         if needle in lower_text:
             findings.append(_finding(relative_path, "suspicious-text-pattern", severity, f"{explanation} Pattern: {pattern}"))
     return findings
+
+
+def _load_ignore_patterns(project_path: Path) -> set[str]:
+    ignore_path = project_path / IGNORE_FILE_NAME
+    try:
+        lines = ignore_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return set()
+
+    patterns = set()
+    for line in lines:
+        pattern = line.strip()
+        if not pattern or pattern.startswith("#"):
+            continue
+        patterns.add(pattern.replace("\\", "/"))
+    return patterns
+
+
+def _relative_path(file_path: Path, project_path: Path) -> str:
+    return file_path.relative_to(project_path).as_posix()
 
 
 def _finding(path: str, finding_type: str, severity: str, explanation: str) -> dict[str, str]:
