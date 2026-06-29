@@ -2,6 +2,15 @@ from __future__ import annotations
 
 CHANGELOG_ENTRIES = [
     {
+        "version": "0.07",
+        "title": "Grouped scanner dashboard",
+        "changes": [
+            "Grouped scan results into overall risk, manifests, lockfiles, lifecycle scripts, secret findings, executable files, and zone/metadata sections.",
+            "Added expandable reviewed and ignored file details near the scan summary.",
+            "Added .codexforgeignore support for known-safe local scanner noise; ignored files are neutral, not suspicious by default.",
+        ],
+    },
+    {
         "version": "0.06",
         "title": "Bugfix pass",
         "changes": [

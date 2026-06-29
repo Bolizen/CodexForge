@@ -1,15 +1,15 @@
 # CodexForge
 
-CodexForge is a local-first project dashboard for safely managing Codex and AI-generated coding projects inside a VM or local development environment.
+CodexForge is a local-first safety dashboard for reviewing Codex and AI-generated coding projects before running anything inside a VM or local development environment.
 
 It is designed to read project metadata and scan files without executing project code, package scripts, installers, or shell files.
 
 ## Why CodexForge Exists
-AI coding agents are more useful when they have clear project instructions, boundaries, build commands, test commands, and security expectations. CodexForge helps developers generate those instructions in a repeatable way while keeping file access local, scoped, and reviewable.
+AI coding agents are more useful when generated work is easy to review before execution. CodexForge keeps project access local, scoped, and reviewable while surfacing scanner findings, project metadata, notes, and AGENTS.md instructions in one dashboard.
 
 # Current Status
 
-CodexForge is an early stage open source project. It currently focuses on local project scanning and safe AGENTS.md generation.
+CodexForge is an early stage open source project. It currently focuses on local-first project scanning, safety review, and safe AGENTS.md generation.
 
 
 
@@ -33,7 +33,7 @@ CodexForge is an early stage open source project. It currently focuses on local 
 
 Open two PowerShell terminals from this repository.
 
-CodexForge is configured for projects under `Z:\CodexProjects`.
+CodexForge is configured for projects under `Z:\CodexProjects`. This repository lives at `Z:\CodexProjects\CodexForge`.
 
 ### Backend
 
@@ -61,7 +61,9 @@ The app runs at `http://127.0.0.1:5173`.
 - CodexForge stores its SQLite database at `backend/data/codexforge.db`.
 - The canonical workspace root is `Z:\CodexProjects`. If it does not exist, the dashboard shows a clear message and does not create it until you create a project.
 - Creating a project will create the configured workspace root folder if needed.
-- The scanner highlights files and patterns for review; it does not claim that every finding is malicious.
+- The scanner dashboard groups scan results by overall risk, manifests, lockfiles, lifecycle scripts, secret findings, executable files, zone/metadata findings, reviewed files, and ignored files.
+- Findings are review prompts, not proof of compromise, and the scanner is not a malware detector.
+- `.codexforgeignore` can suppress known-safe local or self-referential scanner noise. Ignored files are treated neutrally, not as suspicious by default.
 - The AGENTS.md generator previews Markdown before writing. Existing AGENTS.md files require explicit overwrite confirmation.
 
 ## Manual Test Notes
@@ -94,4 +96,4 @@ Use a small throwaway project folder under `Z:\CodexProjects` for these checks.
 5. Scan a test project:
    - Add harmless sample files such as a `package.json` with a `postinstall` script, a `.env` file, or a `.ps1` file.
    - Select Scan.
-   - Confirm the report groups findings by severity and explains what to review.
+   - Confirm the report shows overall risk, grouped scan sections, and expandable reviewed and ignored file details.
