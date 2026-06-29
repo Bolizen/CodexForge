@@ -171,6 +171,12 @@ def run_scan(payload: ProjectPathRequest) -> dict[str, object]:
         "scan_date": now,
         "overall_risk": result["overall_risk"],
         "findings": result["findings"],
+        "manifests": result["manifests"],
+        "lockfiles": result["lockfiles"],
+        "lifecycleScripts": result["lifecycleScripts"],
+        "secretFiles": result["secretFiles"],
+        "ignoredFiles": result["ignoredFiles"],
+        "zone": result["zone"],
     }
 
 

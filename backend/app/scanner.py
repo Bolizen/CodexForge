@@ -66,6 +66,7 @@ def scan_project(project_path: Path) -> dict[str, Any]:
     lockfiles: list[str] = []
     lifecycle_scripts: list[dict[str, str]] = []
     secret_files: list[str] = []
+    ignored_files: list[str] = []
     ignore_patterns = _load_ignore_patterns(project_path)
 
     for current_root, dirs, files in os.walk(project_path):
@@ -80,6 +81,7 @@ def scan_project(project_path: Path) -> dict[str, Any]:
             file_path = root_path / filename
             relative_path = _relative_path(file_path, project_path)
             if relative_path in ignore_patterns:
+                ignored_files.append(relative_path)
                 continue
 
             lower_name = filename.lower()
@@ -132,6 +134,7 @@ def scan_project(project_path: Path) -> dict[str, Any]:
         "lockfiles": sorted(lockfiles),
         "lifecycleScripts": sorted(lifecycle_scripts, key=lambda script: (script["path"], script["script"])),
         "secretFiles": sorted(secret_files),
+        "ignoredFiles": sorted(ignored_files),
         "zone": _infer_zone(project_path),
     }
 

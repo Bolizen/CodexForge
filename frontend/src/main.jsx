@@ -312,7 +312,7 @@ function ProjectHeader({ project, onScan }) {
 }
 
 function ScanReport({ result }) {
-  const groups = useMemo(() => groupFindings(result?.findings || []), [result]);
+  const report = useMemo(() => buildScanReport(result), [result]);
 
   return (
     <section className="panel">
@@ -324,25 +324,135 @@ function ScanReport({ result }) {
         <span className={`risk large risk-${result?.overall_risk || "none"}`}>{result?.overall_risk || "none"}</span>
       </div>
       {!result ? <p className="muted">Run a scan to see findings for this project.</p> : null}
-      {result && result.findings.length === 0 ? <p className="good">No scanner findings. Still review generated code before running it.</p> : null}
-      {["high", "medium", "low"].map((severity) => (
-        groups[severity].length > 0 && (
-          <div className="finding-group" key={severity}>
-            <h3>{severity} severity</h3>
-            {groups[severity].map((finding, index) => (
-              <article className="finding" key={`${finding.path}-${finding.type}-${index}`}>
-                <div>
-                  <strong>{finding.type}</strong>
-                  <code>{finding.path}</code>
-                </div>
-                <p>{finding.explanation}</p>
-              </article>
-            ))}
-          </div>
-        )
-      ))}
+      {result ? <ScanSummary report={report} risk={result.overall_risk} /> : null}
+      {result && report.totalFindings === 0 ? <p className="good">No scanner findings. Still review generated code before running it.</p> : null}
+      {result ? (
+        <div className="scan-section-grid">
+          <PathSection title="Manifests" items={report.manifests} emptyText="No manifests found." />
+          <FindingPathSection title="Lockfiles" items={report.lockfiles} findings={report.lockfileFindings} emptyText="No lockfiles found." />
+          <LifecycleSection items={report.lifecycleScripts} findings={report.lifecycleFindings} />
+          <FindingSection title="Secret Findings" findings={report.secretFindings} emptyText="No secret-looking files found." />
+          <FindingSection title="Executable Files" findings={report.executableFindings} emptyText="No executable files found." />
+          <MetadataSection zone={report.zone} findings={report.metadataFindings} />
+          <PathSection title="Ignored Files" items={report.ignoredFiles} emptyText="No files ignored by .codexforgeignore." />
+        </div>
+      ) : null}
       {result ? <p className="review-note">Review high severity items first, then lifecycle scripts and files that launch processes or fetch remote content.</p> : null}
     </section>
+  );
+}
+
+function ScanSummary({ report, risk }) {
+  return (
+    <div className="scan-summary">
+      <div>
+        <span className="summary-label">Overall risk</span>
+        <strong className={`risk risk-${risk || "none"}`}>{risk || "none"}</strong>
+      </div>
+      <div>
+        <span className="summary-label">Findings</span>
+        <strong>{report.totalFindings}</strong>
+      </div>
+      <div>
+        <span className="summary-label">Reviewed files</span>
+        <strong>{report.reviewedFileCount}</strong>
+      </div>
+      <div>
+        <span className="summary-label">Ignored</span>
+        <strong>{report.ignoredFiles.length}</strong>
+      </div>
+    </div>
+  );
+}
+
+function PathSection({ title, items, emptyText }) {
+  return (
+    <article className="scan-card">
+      <h3>{title}</h3>
+      {items.length > 0 ? (
+        <ul className="path-list">
+          {items.map((item) => (
+            <li key={item}><code>{item}</code></li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted">{emptyText}</p>
+      )}
+    </article>
+  );
+}
+
+function FindingPathSection({ title, items, findings, emptyText }) {
+  return (
+    <article className="scan-card">
+      <h3>{title}</h3>
+      {items.length > 0 ? (
+        <ul className="path-list">
+          {items.map((item) => (
+            <li key={item}><code>{item}</code></li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted">{emptyText}</p>
+      )}
+      {findings.map((finding, index) => <FindingItem finding={finding} key={`${finding.path}-${finding.type}-${index}`} />)}
+    </article>
+  );
+}
+
+function LifecycleSection({ items, findings }) {
+  return (
+    <article className="scan-card">
+      <h3>Lifecycle Scripts</h3>
+      {items.length > 0 ? (
+        <ul className="path-list">
+          {items.map((script) => (
+            <li key={`${script.path}-${script.script}`}>
+              <code>{script.path}</code>
+              <span>{script.script}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted">No package lifecycle scripts found.</p>
+      )}
+      {findings.map((finding, index) => <FindingItem finding={finding} key={`${finding.path}-${finding.type}-${index}`} />)}
+    </article>
+  );
+}
+
+function FindingSection({ title, findings, emptyText }) {
+  return (
+    <article className="scan-card">
+      <h3>{title}</h3>
+      {findings.length > 0 ? findings.map((finding, index) => <FindingItem finding={finding} key={`${finding.path}-${finding.type}-${index}`} />) : <p className="muted">{emptyText}</p>}
+    </article>
+  );
+}
+
+function MetadataSection({ zone, findings }) {
+  return (
+    <article className="scan-card">
+      <h3>Zone/Metadata Findings</h3>
+      <div className="metadata-row">
+        <span>Zone</span>
+        <strong>{zone || "Unknown"}</strong>
+      </div>
+      {findings.length > 0 ? findings.map((finding, index) => <FindingItem finding={finding} key={`${finding.path}-${finding.type}-${index}`} />) : <p className="muted">No additional metadata findings.</p>}
+    </article>
+  );
+}
+
+function FindingItem({ finding }) {
+  return (
+    <div className="finding compact-finding">
+      <div>
+        <strong>{finding.type}</strong>
+        <span className={`risk risk-${finding.severity || "low"}`}>{finding.severity || "low"}</span>
+        <code>{finding.path}</code>
+      </div>
+      <p>{finding.explanation}</p>
+    </div>
   );
 }
 
@@ -423,15 +533,46 @@ async function api(path, options = {}) {
   return data;
 }
 
-function groupFindings(findings) {
-  return findings.reduce(
-    (groups, finding) => {
-      const severity = groups[finding.severity] ? finding.severity : "low";
-      groups[severity].push({ ...finding, severity });
-      return groups;
-    },
-    { high: [], medium: [], low: [] },
-  );
+function buildScanReport(result) {
+  const findings = result?.findings || [];
+  const lifecycleScripts = result?.lifecycleScripts || [];
+  const secretFiles = result?.secretFiles || [];
+  const ignoredFiles = result?.ignoredFiles || [];
+  const manifests = result?.manifests || [];
+  const lockfiles = result?.lockfiles || [];
+  const secretPaths = new Set(secretFiles);
+  const lifecyclePaths = new Set(lifecycleScripts.map((script) => script.path));
+  const lockfilePaths = new Set(lockfiles);
+
+  const secretFindings = findings.filter((finding) => finding.type === "secret-looking-file" || secretPaths.has(finding.path));
+  const executableFindings = findings.filter((finding) => finding.type === "executable-or-script-file");
+  const lifecycleFindings = findings.filter((finding) => finding.type === "package-lifecycle-script" || lifecyclePaths.has(finding.path));
+  const lockfileFindings = findings.filter((finding) => finding.type === "lockfile" || lockfilePaths.has(finding.path));
+  const metadataFindings = findings.filter((finding) => {
+    if (finding.type === "secret-looking-file" || finding.type === "executable-or-script-file") return false;
+    if (finding.type === "package-lifecycle-script" || lifecyclePaths.has(finding.path)) return false;
+    if (finding.type === "lockfile" || lockfilePaths.has(finding.path)) return false;
+    return true;
+  });
+
+  return {
+    totalFindings: findings.length,
+    reviewedFileCount: uniquePaths([...findings.map((finding) => finding.path), ...manifests, ...lockfiles, ...secretFiles]).length,
+    manifests,
+    lockfiles,
+    lifecycleScripts,
+    lifecycleFindings,
+    lockfileFindings,
+    secretFindings,
+    executableFindings,
+    metadataFindings,
+    ignoredFiles,
+    zone: result?.zone || "Unknown",
+  };
+}
+
+function uniquePaths(paths) {
+  return Array.from(new Set(paths.filter(Boolean)));
 }
 
 function formatDate(value) {

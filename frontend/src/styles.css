@@ -255,11 +255,101 @@ pre {
   background: #ffc4b8;
 }
 
+.scan-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+
+.scan-summary > div,
+.scan-card {
+  border: 1px solid #d6dee1;
+  border-radius: 8px;
+  background: #f8fafb;
+}
+
+.scan-summary > div {
+  display: grid;
+  gap: 4px;
+  min-height: 76px;
+  padding: 12px;
+}
+
+.summary-label {
+  color: #627279;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.scan-section-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.scan-card {
+  padding: 14px;
+}
+
+.scan-card h3 {
+  margin-top: 0;
+}
+
+.path-list {
+  display: grid;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.path-list li {
+  display: grid;
+  gap: 3px;
+}
+
+.path-list code,
+.metadata-row strong {
+  overflow-wrap: anywhere;
+}
+
+.path-list span,
+.metadata-row span {
+  color: #627279;
+  font-size: 0.86rem;
+}
+
+.metadata-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #e3e9eb;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+}
+
 .finding {
   display: grid;
   gap: 8px;
   border-top: 1px solid #e3e9eb;
   padding: 12px 0;
+}
+
+.compact-finding {
+  margin-top: 10px;
+}
+
+.compact-finding > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px 8px;
+}
+
+.compact-finding code {
+  grid-column: 1 / -1;
 }
 
 .finding code {
@@ -398,7 +488,8 @@ pre {
   }
 
   .layout,
-  .grid-form {
+  .grid-form,
+  .scan-section-grid {
     grid-template-columns: 1fr;
   }
 
@@ -420,7 +511,8 @@ pre {
   }
 
   .panel-heading,
-  .history-row {
+  .history-row,
+  .scan-summary {
     grid-template-columns: 1fr;
   }
 
