@@ -324,7 +324,15 @@ function ScanReport({ result }) {
         <span className={`risk large risk-${result?.overall_risk || "none"}`}>{result?.overall_risk || "none"}</span>
       </div>
       {!result ? <p className="muted">Run a scan to see findings for this project.</p> : null}
-      {result ? <ScanSummary report={report} risk={result.overall_risk} /> : null}
+      {result ? (
+        <>
+          <ScanSummary report={report} risk={result.overall_risk} />
+          <div className="scan-detail-toggles">
+            <PathDetails title="Reviewed files" items={report.reviewedFiles} emptyText="No reviewed files recorded for this scan." />
+            <PathDetails title="Ignored files" items={report.ignoredFiles} emptyText="No files ignored by .codexforgeignore." />
+          </div>
+        </>
+      ) : null}
       {result && report.totalFindings === 0 ? <p className="good">No scanner findings. Still review generated code before running it.</p> : null}
       {result ? (
         <div className="scan-section-grid">
@@ -334,7 +342,6 @@ function ScanReport({ result }) {
           <FindingSection title="Secret Findings" findings={report.secretFindings} emptyText="No secret-looking files found." />
           <FindingSection title="Executable Files" findings={report.executableFindings} emptyText="No executable files found." />
           <MetadataSection zone={report.zone} findings={report.metadataFindings} />
-          <PathSection title="Ignored Files" items={report.ignoredFiles} emptyText="No files ignored by .codexforgeignore." />
         </div>
       ) : null}
       {result ? <p className="review-note">Review high severity items first, then lifecycle scripts and files that launch processes or fetch remote content.</p> : null}
@@ -355,13 +362,38 @@ function ScanSummary({ report, risk }) {
       </div>
       <div>
         <span className="summary-label">Reviewed files</span>
-        <strong>{report.reviewedFileCount}</strong>
+        <strong>{report.reviewedFiles.length}</strong>
       </div>
       <div>
         <span className="summary-label">Ignored</span>
         <strong>{report.ignoredFiles.length}</strong>
       </div>
     </div>
+  );
+}
+
+function PathDetails({ title, items, emptyText }) {
+  if (items.length === 0) {
+    return (
+      <div className="scan-detail-empty">
+        <strong>{title}</strong>
+        <span>{emptyText}</span>
+      </div>
+    );
+  }
+
+  return (
+    <details className="scan-detail">
+      <summary>
+        <strong>{title}</strong>
+        <span>{items.length} paths</span>
+      </summary>
+      <ul className="path-list">
+        {items.map((item) => (
+          <li key={item}><code>{item}</code></li>
+        ))}
+      </ul>
+    </details>
   );
 }
 
@@ -555,9 +587,11 @@ function buildScanReport(result) {
     return true;
   });
 
+  const reviewedFiles = uniquePaths([...findings.map((finding) => finding.path), ...manifests, ...lockfiles, ...secretFiles]);
+
   return {
     totalFindings: findings.length,
-    reviewedFileCount: uniquePaths([...findings.map((finding) => finding.path), ...manifests, ...lockfiles, ...secretFiles]).length,
+    reviewedFiles,
     manifests,
     lockfiles,
     lifecycleScripts,

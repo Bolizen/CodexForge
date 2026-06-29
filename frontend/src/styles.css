@@ -282,6 +282,45 @@ pre {
   font-weight: 700;
 }
 
+.scan-detail-toggles {
+  display: grid;
+  gap: 8px;
+  margin: -4px 0 14px;
+}
+
+.scan-detail,
+.scan-detail-empty {
+  border: 1px solid #d6dee1;
+  border-radius: 8px;
+  background: #f8fafb;
+  padding: 10px 12px;
+}
+
+.scan-detail summary {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.scan-detail summary span,
+.scan-detail-empty span {
+  color: #627279;
+  font-size: 0.86rem;
+}
+
+.scan-detail .path-list {
+  border-top: 1px solid #e3e9eb;
+  margin-top: 10px;
+  padding-top: 10px;
+}
+
+.scan-detail-empty {
+  display: grid;
+  gap: 2px;
+}
+
 .scan-section-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
