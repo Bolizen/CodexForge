@@ -1,6 +1,6 @@
 # CodexForge
 
-CodexForge is a local-first safety dashboard for reviewing Codex and AI-generated coding projects before running anything inside a VM or local development environment.
+CodexForge is a local-first safety dashboard for reviewing Codex and AI-generated coding projects before running anything in a development environment.
 
 It is designed to read project metadata and scan files without executing project code, package scripts, installers, or shell files.
 
@@ -18,7 +18,7 @@ CodexForge is an early stage open source project. It currently focuses on local-
 - Frontend: React + Vite
 - Backend: Python FastAPI
 - Database: SQLite
-- Canonical workspace root: `Z:\CodexProjects`
+- Default workspace root: `~/CodexForgeProjects`
 
 ## Safety Model
 
@@ -29,13 +29,18 @@ CodexForge is an early stage open source project. It currently focuses on local-
 - Project access is limited to the configured workspace root.
 - Folder creation sanitizes project names and prevents path traversal.
 
-## Windows / Icefields Setup
+## Setup
 
-Open two PowerShell terminals from this repository.
+Clone the repository and open two terminals from the repo root.
 
-CodexForge is configured for projects under `Z:\CodexProjects`. This repository lives at `Z:\CodexProjects\CodexForge`.
+```bash
+git clone <repo-url>
+cd CodexForge
+```
 
 ### Backend
+
+PowerShell:
 
 ```powershell
 cd backend
@@ -44,22 +49,34 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
+macOS/Linux:
+
+```bash
+cd backend
+python -m venv .venv
+./.venv/bin/python -m pip install -r requirements.lock.txt
+./.venv/bin/python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
 If `requirements.lock.txt` is not present, install from `requirements.txt` instead. The API runs at `http://127.0.0.1:8000`.
 
 ### Frontend
 
-```powershell
+```bash
 cd frontend
-npm.cmd install --ignore-scripts
-npm.cmd run dev
+npm install --ignore-scripts
+npm run dev
 ```
+
+On Windows PowerShell, use `npm.cmd install --ignore-scripts` and `npm.cmd run dev`.
 
 The app runs at `http://127.0.0.1:5173`.
 
 ## Notes
 
 - CodexForge stores its SQLite database at `backend/data/codexforge.db`.
-- The canonical workspace root is `Z:\CodexProjects`. If it does not exist, the dashboard shows a clear message and does not create it until you create a project.
+- The default workspace root is `~/CodexForgeProjects`. You can configure a different absolute workspace root in the app.
+- If the configured workspace root does not exist, the dashboard shows a clear message and does not create it until you create a project.
 - Creating a project will create the configured workspace root folder if needed.
 - The scanner dashboard groups scan results by overall risk, manifests, lockfiles, lifecycle scripts, secret findings, executable files, zone/metadata findings, reviewed files, and ignored files.
 - The "Why this risk?" explanation uses existing scan metadata and findings: LOW risk can call out reassuring signals such as no lifecycle scripts, no secret-looking files, no executables, and reviewed manifests or lockfiles; MEDIUM/HIGH risk summarizes contributing finding types.
@@ -72,13 +89,13 @@ The app runs at `http://127.0.0.1:5173`.
 
 ## Manual Test Notes
 
-Use a small throwaway project folder under `Z:\CodexProjects` for these checks.
+Use a small throwaway project folder under `<workspace-root>` for these checks, such as `~/CodexForgeProjects/<project-name>`.
 
 1. Create a project:
    - Start the backend and frontend.
    - Enter a project name, description, and project type.
    - Select Create.
-   - Confirm a sanitized folder appears under `Z:\CodexProjects` and the dashboard lists it by absolute path.
+   - Confirm a sanitized folder appears under `<workspace-root>` and the dashboard lists it by absolute path.
 
 2. Preview AGENTS.md:
    - Select the test project.
@@ -89,7 +106,7 @@ Use a small throwaway project folder under `Z:\CodexProjects` for these checks.
 3. Write AGENTS.md:
    - After previewing, select Write AGENTS.md.
    - Confirm the success message appears.
-   - Confirm `Z:\CodexProjects\<ProjectName>\AGENTS.md` exists and contains the previewed sections.
+   - Confirm `<workspace-root>/<project-name>/AGENTS.md` exists and contains the previewed sections.
 
 4. Confirm overwrite behavior:
    - With `AGENTS.md` already present, edit a field and preview again.

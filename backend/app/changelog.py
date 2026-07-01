@@ -57,9 +57,9 @@ CHANGELOG_ENTRIES = [
     },
     {
         "version": "0.04",
-        "title": r"Workspace root correction to C:\CodeProjects",
+        "title": "Workspace root correction",
         "changes": [
-            r"Changed the default workspace root to C:\CodeProjects.",
+            "Changed the default workspace root to a neutral app-specific folder under the user's home directory.",
             "Validated selected projects under the configured workspace root.",
         ],
     },

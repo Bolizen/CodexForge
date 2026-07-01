@@ -8,8 +8,7 @@ from typing import Any
 
 DB_DIR = Path(__file__).resolve().parent.parent / "data"
 DB_PATH = DB_DIR / "codexforge.db"
-DEFAULT_WORKSPACE_ROOT = r"Z:\CodexProjects"
-LEGACY_DEFAULT_PROJECT_ROOT = r"C:\Code Projects"
+DEFAULT_WORKSPACE_ROOT = str(Path.home() / "CodexForgeProjects")
 WORKSPACE_ROOT_SETTING = "project_root"
 
 
@@ -56,10 +55,6 @@ def init_db() -> None:
         connection.execute(
             "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
             (WORKSPACE_ROOT_SETTING, DEFAULT_WORKSPACE_ROOT),
-        )
-        connection.execute(
-            "UPDATE settings SET value = ? WHERE key = ? AND value = ?",
-            (DEFAULT_WORKSPACE_ROOT, WORKSPACE_ROOT_SETTING, LEGACY_DEFAULT_PROJECT_ROOT),
         )
         _ensure_scan_history_columns(connection)
 
