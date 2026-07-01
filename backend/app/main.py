@@ -161,6 +161,7 @@ def run_scan(payload: ProjectPathRequest) -> dict[str, object]:
     result = scan_project(project)
     now = _now()
     finding_summary = _finding_summary(result["findings"])
+    scan_metadata = _scan_metadata(result)
     with get_connection() as connection:
         cursor = connection.execute(
             """
@@ -172,9 +173,10 @@ def run_scan(payload: ProjectPathRequest) -> dict[str, object]:
                 finding_count,
                 reviewed_file_count,
                 ignored_file_count,
-                finding_summary_json
+                finding_summary_json,
+                scan_metadata_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(project),
@@ -185,6 +187,7 @@ def run_scan(payload: ProjectPathRequest) -> dict[str, object]:
                 result["reviewedFileCount"],
                 len(result["ignoredFiles"]),
                 json.dumps(finding_summary),
+                json.dumps(scan_metadata),
             ),
         )
     return {
@@ -291,3 +294,15 @@ def _finding_summary(findings: list[dict[str, str]]) -> dict[str, int]:
         finding_type = finding.get("type") or "unknown"
         summary[finding_type] = summary.get(finding_type, 0) + 1
     return summary
+
+
+def _scan_metadata(result: dict[str, object]) -> dict[str, object]:
+    return {
+        "manifests": result.get("manifests", []),
+        "lockfiles": result.get("lockfiles", []),
+        "lifecycleScripts": result.get("lifecycleScripts", []),
+        "secretFiles": result.get("secretFiles", []),
+        "ignoredFiles": result.get("ignoredFiles", []),
+        "reviewedFiles": result.get("reviewedFiles", []),
+        "zone": result.get("zone", "Unknown"),
+    }

@@ -10,6 +10,8 @@ const EMPTY_AGENT_FORM = {
   test_commands: "",
   security_notes: "",
 };
+const MAJOR_SECTIONS = ["changelog", "scanReport", "agents", "notes", "history"];
+const OPEN_MAJOR_SECTIONS = Object.fromEntries(MAJOR_SECTIONS.map((section) => [section, true]));
 
 function App() {
   const [projectRoot, setProjectRoot] = useState("");
@@ -27,11 +29,13 @@ function App() {
   const [notes, setNotes] = useState([]);
   const [noteBody, setNoteBody] = useState("");
   const [changelog, setChangelog] = useState([]);
+  const [majorSectionsOpen, setMajorSectionsOpen] = useState(OPEN_MAJOR_SECTIONS);
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.path === selectedPath) || null,
     [projects, selectedPath],
   );
+  const allMajorSectionsOpen = MAJOR_SECTIONS.every((section) => majorSectionsOpen[section]);
 
   useEffect(() => {
     refreshProjects();
@@ -203,6 +207,15 @@ function App() {
     }
   }
 
+  function setMajorSectionOpen(section, open) {
+    setMajorSectionsOpen((current) => (current[section] === open ? current : { ...current, [section]: open }));
+  }
+
+  function toggleMajorSections() {
+    const nextOpen = !allMajorSectionsOpen;
+    setMajorSectionsOpen(Object.fromEntries(MAJOR_SECTIONS.map((section) => [section, nextOpen])));
+  }
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -210,7 +223,12 @@ function App() {
           <h1>CodexForge</h1>
           <p>Local project dashboard for reviewing AI-generated coding work before you run anything.</p>
         </div>
-        <div className="root-pill" title={projectRoot}>{projectRoot || "Loading workspace root..."}</div>
+        <div className="topbar-actions">
+          <button type="button" className="secondary-button" onClick={toggleMajorSections}>
+            {allMajorSectionsOpen ? "Collapse all" : "Expand all"}
+          </button>
+          <div className="root-pill" title={projectRoot}>{projectRoot || "Loading workspace root..."}</div>
+        </div>
       </header>
 
       {message && <div className="notice">{message}</div>}
@@ -250,17 +268,17 @@ function App() {
             </div>
           </div>
 
-          <Changelog entries={changelog} />
+          <Changelog entries={changelog} open={majorSectionsOpen.changelog} onOpenChange={(open) => setMajorSectionOpen("changelog", open)} />
         </aside>
 
         <section className="content">
           {selectedProject ? (
             <>
               <ProjectHeader project={selectedProject} onScan={runScan} />
-              <ScanReport result={scanResult || scanHistory[0]} scans={scanHistory} />
-              <AgentGenerator form={agentForm} updateField={updateAgentField} preview={agentPreview} exists={agentsExists} onPreview={previewAgents} onWrite={writeAgents} />
-              <Notes notes={notes} noteBody={noteBody} setNoteBody={setNoteBody} onAdd={addNote} />
-              <History scans={scanHistory} />
+              <ScanReport result={scanResult || scanHistory[0]} scans={scanHistory} open={majorSectionsOpen.scanReport} onOpenChange={(open) => setMajorSectionOpen("scanReport", open)} />
+              <AgentGenerator form={agentForm} updateField={updateAgentField} preview={agentPreview} exists={agentsExists} onPreview={previewAgents} onWrite={writeAgents} open={majorSectionsOpen.agents} onOpenChange={(open) => setMajorSectionOpen("agents", open)} />
+              <Notes notes={notes} noteBody={noteBody} setNoteBody={setNoteBody} onAdd={addNote} open={majorSectionsOpen.notes} onOpenChange={(open) => setMajorSectionOpen("notes", open)} />
+              <History scans={scanHistory} open={majorSectionsOpen.history} onOpenChange={(open) => setMajorSectionOpen("history", open)} />
             </>
           ) : (
             <div className="panel empty-state">
@@ -274,27 +292,31 @@ function App() {
   );
 }
 
-function Changelog({ entries }) {
+function Changelog({ entries, open, onOpenChange }) {
   return (
-    <section className="panel compact">
-      <h2>Changelog</h2>
-      <div className="changelog-list">
-        {entries.map((entry) => (
-          <article className="changelog-entry" key={entry.version}>
-            <div className="changelog-heading">
-              <span className="version">{entry.version}</span>
-              <strong>{entry.title}</strong>
-            </div>
-            <ul>
-              {entry.changes.map((change) => (
-                <li key={change}>{change}</li>
-              ))}
-            </ul>
-          </article>
-        ))}
-        {entries.length === 0 ? <p className="muted">No changelog entries loaded.</p> : null}
+    <details className="panel compact section-toggle" open={open} onToggle={(event) => onOpenChange(event.currentTarget.open)}>
+      <summary className="section-summary">
+        <span className="section-caret" aria-hidden="true"></span>
+        <h2>Changelog</h2>
+      </summary>
+      <div className="section-body changelog-list">
+          {entries.map((entry) => (
+            <details className="changelog-entry" key={entry.version}>
+              <summary className="changelog-heading">
+                <span className="changelog-caret" aria-hidden="true"></span>
+                <span className="version">{entry.version}</span>
+                <strong>{entry.title}</strong>
+              </summary>
+              <ul>
+                {entry.changes.map((change) => (
+                  <li key={change}>{change}</li>
+                ))}
+              </ul>
+            </details>
+          ))}
+          {entries.length === 0 ? <p className="muted">No changelog entries loaded.</p> : null}
       </div>
-    </section>
+    </details>
   );
 }
 
@@ -311,18 +333,20 @@ function ProjectHeader({ project, onScan }) {
   );
 }
 
-function ScanReport({ result, scans }) {
+function ScanReport({ result, scans, open, onOpenChange }) {
   const report = useMemo(() => buildScanReport(result), [result]);
 
   return (
-    <section className="panel">
-      <div className="panel-heading">
+    <details className="panel section-toggle" open={open} onToggle={(event) => onOpenChange(event.currentTarget.open)}>
+      <summary className="section-summary">
+        <span className="section-caret" aria-hidden="true"></span>
         <div>
           <h2>Scan Report</h2>
           <p className="muted">Findings are review prompts, not proof of a problem.</p>
         </div>
         <span className={`risk large risk-${result?.overall_risk || "none"}`}>{result?.overall_risk || "none"}</span>
-      </div>
+      </summary>
+      <div className="section-body">
       {!result ? <p className="muted">Run a scan to see findings for this project.</p> : null}
       {result ? (
         <>
@@ -330,8 +354,8 @@ function ScanReport({ result, scans }) {
           <RiskExplanation report={report} risk={result.overall_risk} />
           <ScanComparison scans={scans} />
           <div className="scan-detail-toggles">
-            <PathDetails title="Reviewed files" items={report.reviewedFiles} emptyText="No reviewed files recorded for this scan." />
-            <PathDetails title="Ignored files" items={report.ignoredFiles} emptyText="No files ignored by .codexforgeignore." />
+            <PathDetails title="Reviewed files" items={report.reviewedFiles} recordedCount={report.reviewedFileCount} emptyText="No reviewed files recorded for this scan." />
+            <PathDetails title="Ignored files" items={report.ignoredFiles} recordedCount={report.ignoredFileCount} emptyText="No files ignored by .codexforgeignore." />
           </div>
         </>
       ) : null}
@@ -347,7 +371,8 @@ function ScanReport({ result, scans }) {
         </div>
       ) : null}
       {result ? <p className="review-note">Review high severity items first, then lifecycle scripts and files that launch processes or fetch remote content.</p> : null}
-    </section>
+      </div>
+    </details>
   );
 }
 
@@ -383,18 +408,18 @@ function ScanSummary({ report, risk }) {
       </div>
       <div>
         <span className="summary-label">Ignored</span>
-        <strong>{report.ignoredFiles.length}</strong>
+        <strong>{report.ignoredFileCount}</strong>
       </div>
     </div>
   );
 }
 
-function PathDetails({ title, items, emptyText }) {
+function PathDetails({ title, items, recordedCount, emptyText }) {
   if (items.length === 0) {
     return (
       <div className="scan-detail-empty">
         <strong>{title}</strong>
-        <span>{emptyText}</span>
+        <span>{recordedCount > 0 ? `${recordedCount} paths recorded; path list unavailable for this older scan.` : emptyText}</span>
       </div>
     );
   }
@@ -415,46 +440,43 @@ function PathDetails({ title, items, emptyText }) {
 }
 
 function PathSection({ title, items, emptyText, reviewKind }) {
+  const findings = reviewKind ? items.map((item) => metadataFinding(reviewKind, item)) : [];
+
   return (
-    <article className="scan-card">
-      <h3>{title}</h3>
-      {items.length > 0 && reviewKind ? (
-        items.map((item) => <FindingItem finding={metadataFinding(reviewKind, item)} key={`${reviewKind}-${item}`} />)
-      ) : items.length > 0 ? (
+    <ScanSection title={title} count={items.length} findings={findings} emptyText={emptyText}>
+      {reviewKind ? (
+        findings.map((finding, index) => <FindingItem finding={finding} key={findingKey(finding, index)} />)
+      ) : (
         <ul className="path-list">
           {items.map((item) => (
             <li key={item}><code>{item}</code></li>
           ))}
         </ul>
-      ) : (
-        <p className="muted">{emptyText}</p>
       )}
-    </article>
+    </ScanSection>
   );
 }
 
 function FindingPathSection({ title, items, findings, emptyText }) {
+  const count = uniquePaths([...items, ...findings.map((finding) => finding.path)]).length;
+
   return (
-    <article className="scan-card">
-      <h3>{title}</h3>
+    <ScanSection title={title} count={count} findings={findings} emptyText={emptyText}>
       {items.length > 0 ? (
         <ul className="path-list">
           {items.map((item) => (
             <li key={item}><code>{item}</code></li>
           ))}
         </ul>
-      ) : (
-        <p className="muted">{emptyText}</p>
-      )}
-      {findings.map((finding, index) => <FindingItem finding={finding} key={`${finding.path}-${finding.type}-${index}`} />)}
-    </article>
+      ) : null}
+      {findings.map((finding, index) => <FindingItem finding={finding} key={findingKey(finding, index)} />)}
+    </ScanSection>
   );
 }
 
 function LifecycleSection({ items, findings }) {
   return (
-    <article className="scan-card">
-      <h3>Lifecycle Scripts</h3>
+    <ScanSection title="Lifecycle Scripts" count={items.length} findings={findings} emptyText="No package lifecycle scripts found.">
       {items.length > 0 ? (
         <ul className="path-list">
           {items.map((script) => (
@@ -464,51 +486,94 @@ function LifecycleSection({ items, findings }) {
             </li>
           ))}
         </ul>
-      ) : (
-        <p className="muted">No package lifecycle scripts found.</p>
-      )}
-      {findings.map((finding, index) => <FindingItem finding={finding} key={`${finding.path}-${finding.type}-${index}`} />)}
-    </article>
+      ) : null}
+      {findings.map((finding, index) => <FindingItem finding={finding} key={findingKey(finding, index)} />)}
+    </ScanSection>
   );
 }
 
 function FindingSection({ title, findings, emptyText }) {
   return (
-    <article className="scan-card">
-      <h3>{title}</h3>
-      {findings.length > 0 ? findings.map((finding, index) => <FindingItem finding={finding} key={`${finding.path}-${finding.type}-${index}`} />) : <p className="muted">{emptyText}</p>}
-    </article>
+    <ScanSection title={title} count={findings.length} findings={findings} emptyText={emptyText}>
+      {findings.map((finding, index) => <FindingItem finding={finding} key={findingKey(finding, index)} />)}
+    </ScanSection>
   );
 }
 
 function MetadataSection({ zone, findings }) {
   return (
-    <article className="scan-card">
-      <h3>Zone/Metadata Findings</h3>
+    <ScanSection title="Zone/Metadata Findings" count={findings.length} findings={findings} emptyText="No additional metadata findings.">
       <div className="metadata-row">
         <span>Zone</span>
         <strong>{zone || "Unknown"}</strong>
       </div>
-      {findings.length > 0 ? findings.map((finding, index) => <FindingItem finding={finding} key={`${finding.path}-${finding.type}-${index}`} />) : <p className="muted">No additional metadata findings.</p>}
+      {findings.map((finding, index) => <FindingItem finding={finding} key={findingKey(finding, index)} />)}
+    </ScanSection>
+  );
+}
+
+function ScanSection({ title, count, findings, emptyText, children }) {
+  const hasContent = count > 0 || findings.length > 0;
+  const highestSeverity = highestFindingSeverity(findings);
+  const summary = hasContent ? `${count} ${count === 1 ? "item" : "items"}` : emptyText;
+
+  if (!hasContent) {
+    return (
+      <article className="scan-card scan-card-empty">
+        <ScanSectionHeader title={title} count={count} emptyText={emptyText} severity={highestSeverity} />
+      </article>
+    );
+  }
+
+  return (
+    <article className="scan-card">
+      <ScanSectionHeader title={title} count={count} summary={summary} severity={highestSeverity} />
+      <div className="scan-card-body">{children}</div>
     </article>
+  );
+}
+
+function ScanSectionHeader({ title, count, summary, emptyText, severity }) {
+  return (
+    <div className="scan-card-static-heading">
+      <div>
+        <h3>{title}</h3>
+        <small>{summary || emptyText || `${count} ${count === 1 ? "item" : "items"}`}</small>
+      </div>
+      {severity ? <span className={`risk risk-${severity}`}>{severity}</span> : null}
+    </div>
   );
 }
 
 function FindingItem({ finding }) {
   const detail = normalizeFinding(finding);
+  const rawExplanation = finding.explanation && finding.explanation !== detail.why ? finding.explanation : "";
 
   return (
     <div className="finding compact-finding">
-      <div>
+      <div className="finding-heading">
         <strong>{detail.title}</strong>
         <span className={`risk risk-${detail.severity}`}>{detail.severity}</span>
         <span className="finding-category">{detail.category}</span>
         <code>{detail.path}</code>
       </div>
-      <p><strong>Why:</strong> {detail.why}</p>
-      <p><strong>Action:</strong> {detail.action}</p>
+      <div className="finding-detail">
+        <p><strong>Why:</strong> {detail.why}</p>
+        <p><strong>Action:</strong> {detail.action}</p>
+        {rawExplanation ? <p><strong>Raw detail:</strong> {rawExplanation}</p> : null}
+      </div>
     </div>
   );
+}
+
+function findingKey(finding, index) {
+  return [
+    finding.type || "unknown",
+    finding.severity || "low",
+    finding.path || "unknown-path",
+    finding.explanation || "",
+    index,
+  ].join("|");
 }
 
 function ScanComparison({ scans }) {
@@ -544,15 +609,17 @@ function ComparisonItem({ label, value }) {
   );
 }
 
-function AgentGenerator({ form, updateField, preview, exists, onPreview, onWrite }) {
+function AgentGenerator({ form, updateField, preview, exists, onPreview, onWrite, open, onOpenChange }) {
   return (
-    <section className="panel">
-      <div className="panel-heading">
+    <details className="panel section-toggle" open={open} onToggle={(event) => onOpenChange(event.currentTarget.open)}>
+      <summary className="section-summary">
+        <span className="section-caret" aria-hidden="true"></span>
         <div>
           <h2>AGENTS.md Generator</h2>
           <p className="muted">{exists ? "AGENTS.md exists. Writing requires confirmation." : "Preview before writing anything to disk."}</p>
         </div>
-      </div>
+      </summary>
+      <div className="section-body">
       <form onSubmit={onPreview} className="grid-form">
         <textarea value={form.project_purpose} onChange={(event) => updateField("project_purpose", event.target.value)} placeholder="Project purpose" rows="4" />
         <textarea value={form.project_rules} onChange={(event) => updateField("project_rules", event.target.value)} placeholder="Project rules" rows="4" />
@@ -565,14 +632,19 @@ function AgentGenerator({ form, updateField, preview, exists, onPreview, onWrite
         </div>
       </form>
       {preview ? <pre className="preview">{preview}</pre> : null}
-    </section>
+      </div>
+    </details>
   );
 }
 
-function Notes({ notes, noteBody, setNoteBody, onAdd }) {
+function Notes({ notes, noteBody, setNoteBody, onAdd, open, onOpenChange }) {
   return (
-    <section className="panel">
-      <h2>Project Notes</h2>
+    <details className="panel section-toggle" open={open} onToggle={(event) => onOpenChange(event.currentTarget.open)}>
+      <summary className="section-summary">
+        <span className="section-caret" aria-hidden="true"></span>
+        <h2>Project Notes</h2>
+      </summary>
+      <div className="section-body">
       <form onSubmit={onAdd} className="note-form">
         <textarea value={noteBody} onChange={(event) => setNoteBody(event.target.value)} placeholder="Add a note" rows="3" />
         <button type="submit">Add Note</button>
@@ -586,14 +658,19 @@ function Notes({ notes, noteBody, setNoteBody, onAdd }) {
         ))}
         {notes.length === 0 ? <p className="muted">No notes yet.</p> : null}
       </div>
-    </section>
+      </div>
+    </details>
   );
 }
 
-function History({ scans }) {
+function History({ scans, open, onOpenChange }) {
   return (
-    <section className="panel">
-      <h2>Scan History</h2>
+    <details className="panel section-toggle" open={open} onToggle={(event) => onOpenChange(event.currentTarget.open)}>
+      <summary className="section-summary">
+        <span className="section-caret" aria-hidden="true"></span>
+        <h2>Scan History</h2>
+      </summary>
+      <div className="section-body">
       <div className="history-list">
         {scans.map((scan, index) => {
           const previousScan = scans[index + 1];
@@ -616,7 +693,8 @@ function History({ scans }) {
         })}
         {scans.length === 0 ? <p className="muted">No scans saved yet.</p> : null}
       </div>
-    </section>
+      </div>
+    </details>
   );
 }
 
@@ -639,7 +717,10 @@ function buildScanReport(result) {
   const secretFiles = result?.secretFiles || [];
   const ignoredFiles = result?.ignoredFiles || [];
   const manifests = result?.manifests || [];
-  const lockfiles = result?.lockfiles || [];
+  const lockfilePathsFromFindings = findings
+    .filter((finding) => finding.type === "lockfile")
+    .map((finding) => finding.path);
+  const lockfiles = result?.lockfiles?.length ? result.lockfiles : uniquePaths(lockfilePathsFromFindings);
   const secretPaths = new Set(secretFiles);
   const lifecyclePaths = new Set(lifecycleScripts.map((script) => script.path));
   const lockfilePaths = new Set(lockfiles);
@@ -661,6 +742,7 @@ function buildScanReport(result) {
   return {
     totalFindings: result?.findingCount ?? findings.length,
     reviewedFileCount: result?.reviewedFileCount ?? reviewedFiles.length,
+    ignoredFileCount: result?.ignoredFileCount ?? ignoredFiles.length,
     reviewedFiles,
     manifests,
     lockfiles,
@@ -751,6 +833,15 @@ function normalizeFinding(finding = {}) {
 
 function humanizeFindingType(type) {
   return String(type || "unknown").replaceAll("-", " ");
+}
+
+function highestFindingSeverity(findings) {
+  const order = { high: 3, medium: 2, low: 1, none: 0 };
+  const highest = findings.reduce((highest, finding) => {
+    const severity = finding.severity || "low";
+    return order[severity] > order[highest] ? severity : highest;
+  }, "none");
+  return highest === "none" ? "" : highest;
 }
 
 function buildRiskReasons(report, risk) {

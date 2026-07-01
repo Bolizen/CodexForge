@@ -107,6 +107,7 @@ def note_counts() -> dict[str, int]:
 def row_to_scan(row: sqlite3.Row) -> dict[str, Any]:
     findings = [_normalize_finding(finding) for finding in json.loads(row["findings_json"])]
     finding_count = _row_value(row, "finding_count", len(findings))
+    metadata = _load_scan_metadata(row)
     if finding_count == 0 and findings:
         finding_count = len(findings)
     return {
@@ -119,6 +120,13 @@ def row_to_scan(row: sqlite3.Row) -> dict[str, Any]:
         "reviewedFileCount": _row_value(row, "reviewed_file_count", 0),
         "ignoredFileCount": _row_value(row, "ignored_file_count", 0),
         "findingSummary": _load_finding_summary(row, findings),
+        "manifests": _metadata_list(metadata, "manifests"),
+        "lockfiles": _metadata_list(metadata, "lockfiles"),
+        "lifecycleScripts": _metadata_list(metadata, "lifecycleScripts"),
+        "secretFiles": _metadata_list(metadata, "secretFiles"),
+        "ignoredFiles": _metadata_list(metadata, "ignoredFiles"),
+        "reviewedFiles": _metadata_list(metadata, "reviewedFiles"),
+        "zone": str(metadata.get("zone") or "Unknown"),
     }
 
 
@@ -138,6 +146,7 @@ def _ensure_scan_history_columns(connection: sqlite3.Connection) -> None:
         "reviewed_file_count": "INTEGER NOT NULL DEFAULT 0",
         "ignored_file_count": "INTEGER NOT NULL DEFAULT 0",
         "finding_summary_json": "TEXT NOT NULL DEFAULT '{}'",
+        "scan_metadata_json": "TEXT NOT NULL DEFAULT '{}'",
     }
     for name, definition in additions.items():
         if name not in columns:
@@ -161,6 +170,23 @@ def _load_finding_summary(row: sqlite3.Row, findings: list[dict[str, str]]) -> d
         return _summarize_findings(findings)
     normalized = {str(key): int(value) for key, value in summary.items() if isinstance(value, int)}
     return normalized or _summarize_findings(findings)
+
+
+def _load_scan_metadata(row: sqlite3.Row) -> dict[str, Any]:
+    if "scan_metadata_json" not in row.keys():
+        return {}
+
+    try:
+        metadata = json.loads(row["scan_metadata_json"])
+    except (TypeError, json.JSONDecodeError):
+        return {}
+
+    return metadata if isinstance(metadata, dict) else {}
+
+
+def _metadata_list(metadata: dict[str, Any], key: str) -> list[Any]:
+    value = metadata.get(key)
+    return value if isinstance(value, list) else []
 
 
 def _summarize_findings(findings: list[dict[str, str]]) -> dict[str, int]:

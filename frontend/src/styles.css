@@ -96,6 +96,25 @@ pre {
   margin-bottom: 0;
 }
 
+.topbar-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.secondary-button {
+  background: #f7f9fa;
+  border: 1px solid #bac8cd;
+  color: #185a72;
+}
+
+.secondary-button:hover,
+.secondary-button:focus-visible {
+  background: #eef4f6;
+}
+
 .root-pill {
   max-width: 42vw;
   overflow: hidden;
@@ -139,6 +158,73 @@ pre {
 
 .compact {
   padding: 14px;
+}
+
+.section-toggle {
+  padding: 0;
+}
+
+.section-summary {
+  align-items: flex-start;
+  cursor: pointer;
+  display: flex;
+  gap: 10px;
+  justify-content: flex-start;
+  list-style: none;
+  padding: 18px;
+}
+
+.compact.section-toggle .section-summary {
+  padding: 14px;
+}
+
+.section-summary::-webkit-details-marker {
+  display: none;
+}
+
+.section-summary::marker {
+  content: "";
+}
+
+.section-summary:hover {
+  background: #f7f9fa;
+}
+
+.section-summary:focus-visible {
+  outline: 2px solid #185a72;
+  outline-offset: 2px;
+}
+
+.section-summary h2 {
+  margin-bottom: 0;
+}
+
+.section-summary p {
+  margin-bottom: 0;
+}
+
+.section-summary > .risk {
+  margin-left: auto;
+}
+
+.section-caret::before {
+  color: #185a72;
+  content: ">";
+  display: inline-block;
+  font-weight: 900;
+  min-width: 10px;
+}
+
+.section-toggle[open] > .section-summary .section-caret::before {
+  content: "v";
+}
+
+.section-body {
+  padding: 0 18px 18px;
+}
+
+.compact.section-toggle .section-body {
+  padding: 0 14px 14px;
 }
 
 .stack {
@@ -367,6 +453,15 @@ pre {
   gap: 12px;
 }
 
+.scan-detail summary:hover {
+  background: #eef4f6;
+}
+
+.scan-detail summary:focus-visible {
+  outline: 2px solid #185a72;
+  outline-offset: 2px;
+}
+
 .scan-detail summary span,
 .scan-detail-empty span {
   color: #627279;
@@ -385,6 +480,7 @@ pre {
 }
 
 .scan-section-grid {
+  align-items: start;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
@@ -397,6 +493,43 @@ pre {
 
 .scan-card h3 {
   margin-top: 0;
+}
+
+.scan-card-static-heading {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.scan-card-static-heading h3 {
+  margin: 0;
+}
+
+.scan-card-static-heading small {
+  color: #627279;
+  font-size: 0.86rem;
+}
+
+.scan-card > .scan-card-body {
+  border-top: 1px solid #e3e9eb;
+  margin-top: 12px;
+  padding: 12px 0 0;
+}
+
+.scan-card-body {
+  border-top: 1px solid #e3e9eb;
+  padding: 0 14px 14px;
+}
+
+.scan-card-empty {
+  display: grid;
+  gap: 4px;
+  min-height: 0;
+}
+
+.scan-card-empty p {
+  margin-bottom: 0;
 }
 
 .path-list {
@@ -434,8 +567,6 @@ pre {
 }
 
 .finding {
-  display: grid;
-  gap: 8px;
   border-top: 1px solid #e3e9eb;
   padding: 12px 0;
 }
@@ -444,14 +575,24 @@ pre {
   margin-top: 10px;
 }
 
-.compact-finding > div {
+.finding-heading {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 5px 8px;
 }
 
+.finding-heading > .risk {
+  grid-column: 2;
+}
+
 .compact-finding code {
   grid-column: 1 / -1;
+}
+
+.finding-detail {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
 }
 
 .compact-finding p {
@@ -600,9 +741,31 @@ pre {
 }
 
 .changelog-heading {
+  cursor: pointer;
   display: flex;
   align-items: baseline;
   gap: 8px;
+}
+
+.changelog-heading:hover {
+  color: #185a72;
+}
+
+.changelog-heading:focus-visible {
+  outline: 2px solid #185a72;
+  outline-offset: 2px;
+}
+
+.changelog-caret::before {
+  color: #185a72;
+  content: ">";
+  display: inline-block;
+  font-weight: 900;
+  width: 10px;
+}
+
+.changelog-entry[open] .changelog-caret::before {
+  content: "v";
 }
 
 .version {
