@@ -62,6 +62,7 @@ The app runs at `http://127.0.0.1:5173`.
 - The canonical workspace root is `Z:\CodexProjects`. If it does not exist, the dashboard shows a clear message and does not create it until you create a project.
 - Creating a project will create the configured workspace root folder if needed.
 - The scanner dashboard groups scan results by overall risk, manifests, lockfiles, lifecycle scripts, secret findings, executable files, zone/metadata findings, reviewed files, and ignored files.
+- The "Why this risk?" explanation uses existing scan metadata and findings: LOW risk can call out reassuring signals such as no lifecycle scripts, no secret-looking files, no executables, and reviewed manifests or lockfiles; MEDIUM/HIGH risk summarizes contributing finding types.
 - Recent scans are stored locally in SQLite as compact metadata: timestamp, overall risk, finding count, reviewed file count, ignored file count, finding-type summary, and risk-change marker.
 - Older scan rows may show unavailable or zero metadata for fields added after those scans were created. Scan history does not store full file contents.
 - Findings are review prompts, not proof of compromise, and the scanner is not a malware detector.

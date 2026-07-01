@@ -2,6 +2,15 @@ from __future__ import annotations
 
 CHANGELOG_ENTRIES = [
     {
+        "version": "0.09",
+        "title": "Risk explanation",
+        "changes": [
+            "Added a concise Why this risk? section near the scan summary.",
+            "Explained LOW risk with reassuring scan signals and MEDIUM/HIGH risk with contributing finding types.",
+            "Kept explanations as review context, not compromise or malware detection claims.",
+        ],
+    },
+    {
         "version": "0.08",
         "title": "Scan history metadata",
         "changes": [
