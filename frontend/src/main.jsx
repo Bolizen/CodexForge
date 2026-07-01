@@ -257,7 +257,7 @@ function App() {
           {selectedProject ? (
             <>
               <ProjectHeader project={selectedProject} onScan={runScan} />
-              <ScanReport result={scanResult || scanHistory[0]} />
+              <ScanReport result={scanResult || scanHistory[0]} scans={scanHistory} />
               <AgentGenerator form={agentForm} updateField={updateAgentField} preview={agentPreview} exists={agentsExists} onPreview={previewAgents} onWrite={writeAgents} />
               <Notes notes={notes} noteBody={noteBody} setNoteBody={setNoteBody} onAdd={addNote} />
               <History scans={scanHistory} />
@@ -311,7 +311,7 @@ function ProjectHeader({ project, onScan }) {
   );
 }
 
-function ScanReport({ result }) {
+function ScanReport({ result, scans }) {
   const report = useMemo(() => buildScanReport(result), [result]);
 
   return (
@@ -328,6 +328,7 @@ function ScanReport({ result }) {
         <>
           <ScanSummary report={report} risk={result.overall_risk} />
           <RiskExplanation report={report} risk={result.overall_risk} />
+          <ScanComparison scans={scans} />
           <div className="scan-detail-toggles">
             <PathDetails title="Reviewed files" items={report.reviewedFiles} emptyText="No reviewed files recorded for this scan." />
             <PathDetails title="Ignored files" items={report.ignoredFiles} emptyText="No files ignored by .codexforgeignore." />
@@ -500,6 +501,39 @@ function FindingItem({ finding }) {
         <code>{finding.path}</code>
       </div>
       <p>{finding.explanation}</p>
+    </div>
+  );
+}
+
+function ScanComparison({ scans }) {
+  const comparison = useMemo(() => buildScanComparison(scans), [scans]);
+
+  return (
+    <section className="scan-comparison">
+      <h2>Changed Since Previous Scan</h2>
+      {!comparison ? (
+        <p className="muted">No previous scan to compare yet.</p>
+      ) : (
+        <div className="comparison-grid">
+          <ComparisonItem label="Risk" value={comparison.riskChange} />
+          <ComparisonItem label="Findings" value={comparison.findingDelta} />
+          <ComparisonItem label="Reviewed files" value={comparison.reviewedDelta} />
+          <ComparisonItem label="Ignored files" value={comparison.ignoredDelta} />
+          <div className="comparison-summary">
+            <strong>Finding types</strong>
+            <span>{comparison.typeSummary}</span>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ComparisonItem({ label, value }) {
+  return (
+    <div className="comparison-item">
+      <span>{label}</span>
+      <strong>{value}</strong>
     </div>
   );
 }
@@ -677,6 +711,55 @@ function formatTopFindingTypes(summary) {
     .slice(0, 3);
 
   return entries.map(([type, count]) => `${type}: ${count}`).join(", ");
+}
+
+function buildScanComparison(scans) {
+  if (!scans || scans.length < 2) return null;
+
+  const latest = scans[0];
+  const previous = scans[1];
+  return {
+    riskChange:
+      latest.overall_risk === previous.overall_risk
+        ? "Risk unchanged"
+        : `${formatRiskLabel(previous.overall_risk)} -> ${formatRiskLabel(latest.overall_risk)}`,
+    findingDelta: formatCountDelta(scanFindingCount(latest) - scanFindingCount(previous), "finding", "findings"),
+    reviewedDelta: formatCountDelta(scanReviewedCount(latest) - scanReviewedCount(previous), "reviewed file", "reviewed files"),
+    ignoredDelta: formatCountDelta(scanIgnoredCount(latest) - scanIgnoredCount(previous), "ignored file", "ignored files"),
+    typeSummary: formatFindingTypeDelta(latest.findingSummary, previous.findingSummary),
+  };
+}
+
+function formatRiskLabel(risk) {
+  return (risk || "none").toUpperCase();
+}
+
+function scanFindingCount(scan) {
+  return scan.findingCount ?? scan.findings?.length ?? 0;
+}
+
+function scanReviewedCount(scan) {
+  return scan.reviewedFileCount ?? 0;
+}
+
+function scanIgnoredCount(scan) {
+  return scan.ignoredFileCount ?? 0;
+}
+
+function formatCountDelta(delta, singular, plural) {
+  if (delta === 0) return "no change";
+  const label = Math.abs(delta) === 1 ? singular : plural;
+  return `${delta > 0 ? "+" : ""}${delta} ${label}`;
+}
+
+function formatFindingTypeDelta(latestSummary = {}, previousSummary = {}) {
+  const types = Array.from(new Set([...Object.keys(latestSummary || {}), ...Object.keys(previousSummary || {})])).sort();
+  const changes = types
+    .map((type) => [type, (latestSummary?.[type] || 0) - (previousSummary?.[type] || 0)])
+    .filter(([, delta]) => delta !== 0)
+    .map(([type, delta]) => `${type}: ${delta > 0 ? "+" : ""}${delta}`);
+
+  return changes.length > 0 ? changes.join(", ") : "No finding-type changes";
 }
 
 function formatDate(value) {

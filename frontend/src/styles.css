@@ -308,6 +308,43 @@ pre {
   margin-bottom: 0;
 }
 
+.scan-comparison {
+  border: 1px solid #d6dee1;
+  border-radius: 8px;
+  background: #f8fafb;
+  margin: -4px 0 14px;
+  padding: 12px;
+}
+
+.scan-comparison h2 {
+  margin-bottom: 10px;
+}
+
+.comparison-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.comparison-item,
+.comparison-summary {
+  display: grid;
+  gap: 4px;
+}
+
+.comparison-item span,
+.comparison-summary span {
+  color: #627279;
+  font-size: 0.86rem;
+  overflow-wrap: anywhere;
+}
+
+.comparison-summary {
+  grid-column: 1 / -1;
+  border-top: 1px solid #e3e9eb;
+  padding-top: 10px;
+}
+
 .scan-detail-toggles {
   display: grid;
   gap: 8px;
@@ -583,7 +620,8 @@ pre {
 
   .layout,
   .grid-form,
-  .scan-section-grid {
+  .scan-section-grid,
+  .comparison-grid {
     grid-template-columns: 1fr;
   }
 
