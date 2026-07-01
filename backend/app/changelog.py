@@ -2,6 +2,15 @@ from __future__ import annotations
 
 CHANGELOG_ENTRIES = [
     {
+        "version": "0.10",
+        "title": "Latest scan comparison",
+        "changes": [
+            "Added a Changed since previous scan section comparing the newest scan with the immediately previous scan for the same project.",
+            "Showed risk change, finding count delta, reviewed count delta, ignored count delta, and finding-type summary changes.",
+            "Used compact scan history metadata only, with no raw file contents or compromise detection claims.",
+        ],
+    },
+    {
         "version": "0.09",
         "title": "Risk explanation",
         "changes": [
