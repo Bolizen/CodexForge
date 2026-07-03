@@ -12,6 +12,33 @@ const EMPTY_AGENT_FORM = {
 };
 const MAJOR_SECTIONS = ["changelog", "scanReport", "agents", "notes", "history"];
 const OPEN_MAJOR_SECTIONS = Object.fromEntries(MAJOR_SECTIONS.map((section) => [section, true]));
+const TRUST_PROFILE_FIELDS = [
+  "trustedPackageManagers",
+  "expectedManifestFiles",
+  "expectedLockfiles",
+  "allowedLifecycleScripts",
+  "reviewedPaths",
+  "ignoredPaths",
+];
+const EMPTY_TRUST_PROFILE = {
+  project_path: "",
+  trustedPackageManagers: [],
+  expectedManifestFiles: [],
+  expectedLockfiles: [],
+  allowedLifecycleScripts: [],
+  reviewedPaths: [],
+  ignoredPaths: [],
+  riskTolerance: "normal",
+  notes: "",
+};
+const TRUST_PROFILE_INPUTS = [
+  { field: "trustedPackageManagers", label: "Package managers", rows: 2, placeholder: "npm, pip" },
+  { field: "expectedManifestFiles", label: "Expected manifests", rows: 2, placeholder: "package.json, requirements.txt" },
+  { field: "expectedLockfiles", label: "Expected lockfiles", rows: 2, placeholder: "package-lock.json, uv.lock" },
+  { field: "allowedLifecycleScripts", label: "Allowed lifecycle scripts", rows: 2, placeholder: "prepare, postinstall" },
+  { field: "reviewedPaths", label: "Reviewed paths", rows: 2, placeholder: "src/, package.json" },
+  { field: "ignoredPaths", label: "Ignored paths", rows: 2, placeholder: "dist/, local.env" },
+];
 const SCAN_GUIDANCE = {
   manifests: {
     why: "Manifest files define dependencies, scripts, and package metadata for the project.",
@@ -57,6 +84,8 @@ function App() {
   const [scanResult, setScanResult] = useState(null);
   const [scanHistory, setScanHistory] = useState([]);
   const [selectedScanId, setSelectedScanId] = useState(null);
+  const [trustProfile, setTrustProfile] = useState(EMPTY_TRUST_PROFILE);
+  const [trustProfileMessage, setTrustProfileMessage] = useState("");
   const [notes, setNotes] = useState([]);
   const [noteBody, setNoteBody] = useState("");
   const [changelog, setChangelog] = useState([]);
@@ -83,6 +112,7 @@ function App() {
     if (selectedPath) {
       loadNotes(selectedPath);
       loadScanHistory(selectedPath);
+      loadTrustProfile(selectedPath);
       checkAgentsExists(selectedPath);
       setAgentPreview("");
       setScanResult(null);
@@ -106,6 +136,8 @@ function App() {
         setScanResult(null);
         setSelectedScanId(null);
         setScanHistory([]);
+        setTrustProfile(EMPTY_TRUST_PROFILE);
+        setTrustProfileMessage("");
         setNotes([]);
         setAgentsExists(false);
         setAgentPreview("");
@@ -233,6 +265,31 @@ function App() {
     }
   }
 
+  async function loadTrustProfile(path) {
+    try {
+      const data = await api(`/api/trust-profile?project_path=${encodeURIComponent(path)}`);
+      setTrustProfile({ ...EMPTY_TRUST_PROFILE, ...data });
+      setTrustProfileMessage("");
+    } catch (error) {
+      setTrustProfile(EMPTY_TRUST_PROFILE);
+      setTrustProfileMessage(error.message);
+    }
+  }
+
+  async function saveTrustProfile(profile) {
+    if (!selectedPath) return;
+    try {
+      const data = await api("/api/trust-profile", {
+        method: "PUT",
+        body: { ...profile, project_path: selectedPath },
+      });
+      setTrustProfile({ ...EMPTY_TRUST_PROFILE, ...data });
+      setTrustProfileMessage("Trust profile saved.");
+    } catch (error) {
+      setTrustProfileMessage(error.message);
+    }
+  }
+
   async function addNote(event) {
     event.preventDefault();
     if (!selectedPath || !noteBody.trim()) return;
@@ -315,7 +372,8 @@ function App() {
           {selectedProject ? (
             <>
               <ProjectHeader project={selectedProject} onScan={runScan} />
-              <ScanReport result={displayedScan} scans={scanHistory} viewMode={scanViewMode} open={majorSectionsOpen.scanReport} onOpenChange={(open) => setMajorSectionOpen("scanReport", open)} />
+              <TrustProfilePanel profile={trustProfile} message={trustProfileMessage} onSave={saveTrustProfile} />
+              <ScanReport result={displayedScan} scans={scanHistory} trustProfile={trustProfile} viewMode={scanViewMode} open={majorSectionsOpen.scanReport} onOpenChange={(open) => setMajorSectionOpen("scanReport", open)} />
               <AgentGenerator form={agentForm} updateField={updateAgentField} preview={agentPreview} exists={agentsExists} onPreview={previewAgents} onWrite={writeAgents} open={majorSectionsOpen.agents} onOpenChange={(open) => setMajorSectionOpen("agents", open)} />
               <Notes notes={notes} noteBody={noteBody} setNoteBody={setNoteBody} onAdd={addNote} open={majorSectionsOpen.notes} onOpenChange={(open) => setMajorSectionOpen("notes", open)} />
               <History scans={scanHistory} selectedScanId={selectedScanId} onSelectScan={setSelectedScanId} open={majorSectionsOpen.history} onOpenChange={(open) => setMajorSectionOpen("history", open)} />
@@ -373,13 +431,66 @@ function ProjectHeader({ project, onScan }) {
   );
 }
 
-function ScanReport({ result, scans, viewMode, open, onOpenChange }) {
+function TrustProfilePanel({ profile, message, onSave }) {
+  const [draft, setDraft] = useState(formatTrustProfileDraft(profile));
+
+  useEffect(() => {
+    setDraft(formatTrustProfileDraft(profile));
+  }, [profile]);
+
+  function updateField(field, value) {
+    setDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  function submit(event) {
+    event.preventDefault();
+    onSave(parseTrustProfileDraft(draft));
+  }
+
+  return (
+    <section className="panel trust-profile-panel">
+      <div className="panel-heading">
+        <div>
+          <h2>Trust Profile</h2>
+          <p className="muted">Optional project expectations. This adds context only; findings stay visible.</p>
+        </div>
+      </div>
+      <form className="trust-profile-form" onSubmit={submit}>
+        {TRUST_PROFILE_INPUTS.map((input) => (
+          <label key={input.field}>
+            {input.label}
+            <textarea value={draft[input.field]} onChange={(event) => updateField(input.field, event.target.value)} rows={input.rows} placeholder={input.placeholder} />
+          </label>
+        ))}
+        <label>
+          Risk tolerance
+          <select value={draft.riskTolerance} onChange={(event) => updateField("riskTolerance", event.target.value)}>
+            <option value="cautious">cautious</option>
+            <option value="normal">normal</option>
+            <option value="permissive">permissive</option>
+          </select>
+        </label>
+        <label>
+          Notes
+          <textarea value={draft.notes} onChange={(event) => updateField("notes", event.target.value)} rows="3" placeholder="Local review notes for this project" />
+        </label>
+        <div className="trust-profile-actions">
+          <button type="submit">Save Trust Profile</button>
+          {message ? <span>{message}</span> : null}
+        </div>
+      </form>
+    </section>
+  );
+}
+
+function ScanReport({ result, scans, trustProfile, viewMode, open, onOpenChange }) {
   const [copyStatus, setCopyStatus] = useState("");
   const report = useMemo(() => buildScanReport(result), [result]);
   const comparison = useMemo(() => buildScanComparisonFor(result, scans), [result, scans]);
+  const trustContext = useMemo(() => buildTrustProfileContext(report, trustProfile), [report, trustProfile]);
   const reportMarkdown = useMemo(
-    () => (result ? buildScanReportMarkdown(result, report, comparison) : ""),
-    [result, report, comparison],
+    () => (result ? buildScanReportMarkdown(result, report, comparison, trustContext) : ""),
+    [result, report, comparison, trustContext],
   );
 
   useEffect(() => {
@@ -420,7 +531,7 @@ function ScanReport({ result, scans, viewMode, open, onOpenChange }) {
             {viewMode === "history" ? `Viewing history scan from ${formatDate(result.scan_date)}` : `Viewing latest scan from ${formatDate(result.scan_date)}`}
           </div>
           <div className="scan-actions">
-            <button type="button" className="secondary-button" onClick={() => exportLatestScan(reportMarkdown)}>
+            <button type="button" className="secondary-button" onClick={() => exportScanReport(reportMarkdown)}>
               Export scan-report.md
             </button>
             <button type="button" className="secondary-button" onClick={copyReportMarkdown}>
@@ -430,6 +541,7 @@ function ScanReport({ result, scans, viewMode, open, onOpenChange }) {
           {copyStatus ? <p className="copy-status">{copyStatus}</p> : null}
           <RiskExplanation report={report} risk={result.overall_risk} />
           <ScanComparison comparison={comparison} />
+          <TrustProfileContext context={trustContext} />
           <div className="scan-detail-toggles">
             <PathDetails title="Reviewed files" items={report.reviewedFiles} recordedCount={report.reviewedFileCount} emptyText="No reviewed files recorded for this scan." guidance={SCAN_GUIDANCE.reviewedFiles} />
             <PathDetails title="Ignored files" items={report.ignoredFiles} recordedCount={report.ignoredFileCount} emptyText="No files ignored by .codexforgeignore." guidance={SCAN_GUIDANCE.ignoredFiles} />
@@ -509,11 +621,7 @@ function PathDetails({ title, items, recordedCount, emptyText, guidance }) {
         <span>{items.length} paths</span>
       </summary>
       <GuidanceBlock guidance={guidance} />
-      <ul className="path-list">
-        {items.map((item) => (
-          <li key={item}><code>{item}</code></li>
-        ))}
-      </ul>
+      <PathList items={items} />
     </details>
   );
 }
@@ -526,11 +634,7 @@ function PathSection({ title, items, emptyText, reviewKind, guidance }) {
       {reviewKind ? (
         findings.map((finding, index) => <FindingItem finding={finding} key={findingKey(finding, index)} />)
       ) : (
-        <ul className="path-list">
-          {items.map((item) => (
-            <li key={item}><code>{item}</code></li>
-          ))}
-        </ul>
+        <PathList items={items} />
       )}
     </ScanSection>
   );
@@ -541,13 +645,7 @@ function FindingPathSection({ title, items, findings, emptyText, guidance }) {
 
   return (
     <ScanSection title={title} count={count} findings={findings} emptyText={emptyText} guidance={guidance}>
-      {items.length > 0 ? (
-        <ul className="path-list">
-          {items.map((item) => (
-            <li key={item}><code>{item}</code></li>
-          ))}
-        </ul>
-      ) : null}
+      {items.length > 0 ? <PathList items={items} /> : null}
       {findings.map((finding, index) => <FindingItem finding={finding} key={findingKey(finding, index)} />)}
     </ScanSection>
   );
@@ -576,6 +674,16 @@ function FindingSection({ title, findings, emptyText, guidance }) {
     <ScanSection title={title} count={findings.length} findings={findings} emptyText={emptyText} guidance={guidance}>
       {findings.map((finding, index) => <FindingItem finding={finding} key={findingKey(finding, index)} />)}
     </ScanSection>
+  );
+}
+
+function PathList({ items }) {
+  return (
+    <ul className="path-list">
+      {items.map((item, index) => (
+        <li key={`${item}-${index}`}><code>{item}</code></li>
+      ))}
+    </ul>
   );
 }
 
@@ -642,7 +750,7 @@ function FindingItem({ finding }) {
   const rawExplanation = finding.explanation && finding.explanation !== detail.why ? finding.explanation : "";
 
   return (
-    <div className="finding compact-finding">
+    <div className="finding">
       <div className="finding-heading">
         <strong>{detail.title}</strong>
         <span className={`risk risk-${detail.severity}`}>{detail.severity}</span>
@@ -695,6 +803,51 @@ function ComparisonItem({ label, value }) {
     <div className="comparison-item">
       <span>{label}</span>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+function TrustProfileContext({ context }) {
+  return (
+    <section className="trust-context">
+      <h2>Trust Profile Context</h2>
+      {!context.configured ? (
+        <p className="muted">No trust profile configured. Add expected project traits to label scan metadata as expected or needing review.</p>
+      ) : (
+        <div className="trust-context-list">
+          <TrustContextGroup title="Manifests" items={context.manifests} />
+          <TrustContextGroup title="Lockfiles" items={context.lockfiles} />
+          <TrustContextGroup title="Lifecycle scripts" items={context.lifecycleScripts} />
+          <TrustContextGroup title="Reviewed paths" items={context.reviewedPaths} />
+          <TrustContextGroup title="Ignored paths" items={context.ignoredPaths} />
+          {context.packageManagers.length ? (
+            <div className="trust-context-item">
+              <strong>Package managers</strong>
+              <span>{context.packageManagers.join(", ")}</span>
+            </div>
+          ) : null}
+          <div className="trust-context-item">
+            <strong>Risk tolerance</strong>
+            <span>{context.riskTolerance}</span>
+          </div>
+          {context.notes ? <p className="trust-notes">{context.notes}</p> : null}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TrustContextGroup({ title, items }) {
+  if (!items.length) return null;
+  return (
+    <div className="trust-context-group">
+      <strong>{title}</strong>
+      {items.map((item) => (
+        <div className="trust-context-item" key={`${title}-${item.status}-${item.path}`}>
+          <span className={`trust-status ${trustStatusClass(item.status)}`}>{item.status}</span>
+          <span>{item.path}</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -805,6 +958,49 @@ async function api(path, options = {}) {
   return data;
 }
 
+function formatTrustProfileDraft(profile) {
+  const source = { ...EMPTY_TRUST_PROFILE, ...profile };
+  return {
+    trustedPackageManagers: arrayToText(source.trustedPackageManagers),
+    expectedManifestFiles: arrayToText(source.expectedManifestFiles),
+    expectedLockfiles: arrayToText(source.expectedLockfiles),
+    allowedLifecycleScripts: arrayToText(source.allowedLifecycleScripts),
+    reviewedPaths: arrayToText(source.reviewedPaths),
+    ignoredPaths: arrayToText(source.ignoredPaths),
+    riskTolerance: source.riskTolerance || "normal",
+    notes: source.notes || "",
+  };
+}
+
+function parseTrustProfileDraft(draft) {
+  return {
+    trustedPackageManagers: textToArray(draft.trustedPackageManagers),
+    expectedManifestFiles: textToArray(draft.expectedManifestFiles),
+    expectedLockfiles: textToArray(draft.expectedLockfiles),
+    allowedLifecycleScripts: textToArray(draft.allowedLifecycleScripts),
+    reviewedPaths: textToArray(draft.reviewedPaths),
+    ignoredPaths: textToArray(draft.ignoredPaths),
+    riskTolerance: draft.riskTolerance || "normal",
+    notes: draft.notes || "",
+  };
+}
+
+function arrayToText(value) {
+  return Array.isArray(value) ? value.join("\n") : "";
+}
+
+function textToArray(value) {
+  const seen = new Set();
+  return String(value || "")
+    .split(/[,\n]/)
+    .map((item) => item.trim())
+    .filter((item) => {
+      if (!item || seen.has(item)) return false;
+      seen.add(item);
+      return true;
+    });
+}
+
 function buildScanReport(result) {
   const findings = result?.findings || [];
   const lifecycleScripts = scanArray(result, "lifecycleScripts");
@@ -863,6 +1059,91 @@ function buildScanReport(result) {
 function scanArray(result, field) {
   const value = result?.[field];
   return Array.isArray(value) ? value : [];
+}
+
+function buildTrustProfileContext(report, profile = EMPTY_TRUST_PROFILE) {
+  const normalized = { ...EMPTY_TRUST_PROFILE, ...profile };
+  const expectedManifestFiles = scanArray(normalized, "expectedManifestFiles");
+  const expectedLockfiles = scanArray(normalized, "expectedLockfiles");
+  const allowedLifecycleScripts = scanArray(normalized, "allowedLifecycleScripts");
+  const reviewedPaths = scanArray(normalized, "reviewedPaths");
+  const ignoredPaths = scanArray(normalized, "ignoredPaths");
+  const packageManagers = scanArray(normalized, "trustedPackageManagers");
+  const configured = trustProfileConfigured(normalized);
+
+  return {
+    configured,
+    packageManagers,
+    riskTolerance: normalized.riskTolerance || "normal",
+    notes: normalized.notes || "",
+    manifests: [
+      ...statusForFoundPaths(report.manifests, expectedManifestFiles),
+      ...statusForMissingExpected(expectedManifestFiles, report.manifests),
+    ],
+    lockfiles: [
+      ...statusForFoundPaths(report.lockfiles, expectedLockfiles),
+      ...statusForMissingExpected(expectedLockfiles, report.lockfiles),
+    ],
+    lifecycleScripts: report.lifecycleScripts.map((script) => ({
+      status: allowedLifecycleScripts.includes(script.script) ? "Expected" : "Needs review",
+      path: `${script.path || "Unknown path"}: ${script.script || "unknown script"}`,
+    })),
+    reviewedPaths: statusForProfilePaths(reviewedPaths, report.reviewedFiles, report.reviewedFileCount),
+    ignoredPaths: statusForProfilePaths(ignoredPaths, report.ignoredFiles, report.ignoredFileCount),
+  };
+}
+
+function trustProfileConfigured(profile) {
+  return TRUST_PROFILE_FIELDS.some((field) => scanArray(profile, field).length > 0)
+    || (profile.riskTolerance && profile.riskTolerance !== "normal")
+    || Boolean(profile.notes);
+}
+
+function statusForFoundPaths(foundPaths, expectedPaths) {
+  if (!expectedPaths.length) {
+    return foundPaths.map((path) => ({ status: "Needs review", path }));
+  }
+  return foundPaths.map((path) => ({
+    status: pathMatchesAny(path, expectedPaths) ? "Expected" : "Unexpected",
+    path,
+  }));
+}
+
+function statusForMissingExpected(expectedPaths, foundPaths) {
+  return expectedPaths
+    .filter((expected) => !foundPaths.some((path) => pathMatchesExpected(path, expected)))
+    .map((path) => ({ status: "Missing expected", path }));
+}
+
+function statusForProfilePaths(profilePaths, scanPaths, recordedCount = scanPaths.length) {
+  if (!scanPaths.length && recordedCount > 0) {
+    return profilePaths.map((path) => ({
+      status: "Needs review",
+      path: `${path} (path list unavailable for this older scan)`,
+    }));
+  }
+  return profilePaths.map((path) => ({
+    status: scanPaths.some((scanPath) => pathMatchesExpected(scanPath, path)) ? "Expected" : "Missing expected",
+    path,
+  }));
+}
+
+function pathMatchesAny(path, expectedPaths) {
+  return expectedPaths.some((expected) => pathMatchesExpected(path, expected));
+}
+
+function pathMatchesExpected(path, expected) {
+  const normalizedPath = normalizePath(path);
+  const normalizedExpected = normalizePath(expected);
+  return normalizedPath === normalizedExpected || normalizedPath.endsWith(`/${normalizedExpected}`);
+}
+
+function normalizePath(path) {
+  return String(path || "").replaceAll("\\", "/").replace(/^\/+/, "").trim();
+}
+
+function trustStatusClass(status) {
+  return String(status || "").toLowerCase().replaceAll(" ", "-");
 }
 
 function uniquePaths(paths) {
@@ -1042,7 +1323,7 @@ function formatFindingTypeDelta(latestSummary = {}, previousSummary = {}) {
   return changes.length > 0 ? changes.join(", ") : "No finding-type changes";
 }
 
-function exportLatestScan(content) {
+function exportScanReport(content) {
   const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
@@ -1054,7 +1335,7 @@ function exportLatestScan(content) {
   URL.revokeObjectURL(url);
 }
 
-function buildScanReportMarkdown(result, report, comparison) {
+function buildScanReportMarkdown(result, report, comparison, trustContext) {
   return [
     "# Scan Report",
     "",
@@ -1103,6 +1384,9 @@ function buildScanReportMarkdown(result, report, comparison) {
     "",
     markdownText(report.zone || "Unknown"),
     "",
+    "## Trust Profile Context",
+    formatMarkdownTrustContext(trustContext),
+    "",
     "## Comparison with previous scan",
     formatMarkdownComparison(comparison),
     "",
@@ -1142,6 +1426,33 @@ function formatMarkdownComparison(comparison) {
     `- Ignored files: ${markdownText(comparison.ignoredDelta)}`,
     `- Finding types: ${markdownText(comparison.typeSummary)}`,
   ].join("\n");
+}
+
+function formatMarkdownTrustContext(context) {
+  if (!context?.configured) {
+    return "No trust profile configured. Trust profile context is optional and does not hide scanner findings.";
+  }
+
+  const lines = [];
+  if (context.packageManagers?.length) {
+    lines.push(`- Package managers: ${context.packageManagers.map(markdownText).join(", ")}`);
+  }
+  lines.push(`- Risk tolerance: ${markdownText(context.riskTolerance)}`);
+  appendTrustContextLines(lines, "Manifests", context.manifests);
+  appendTrustContextLines(lines, "Lockfiles", context.lockfiles);
+  appendTrustContextLines(lines, "Lifecycle scripts", context.lifecycleScripts);
+  appendTrustContextLines(lines, "Reviewed paths", context.reviewedPaths);
+  appendTrustContextLines(lines, "Ignored paths", context.ignoredPaths);
+  if (context.notes) lines.push(`- Notes: ${markdownText(context.notes)}`);
+  return lines.join("\n");
+}
+
+function appendTrustContextLines(lines, title, items) {
+  if (!items?.length) return;
+  lines.push(`- ${title}:`);
+  items.forEach((item) => {
+    lines.push(`  - ${markdownText(item.status)}: ${markdownInlineCode(item.path)}`);
+  });
 }
 
 function markdownInlineCode(value) {

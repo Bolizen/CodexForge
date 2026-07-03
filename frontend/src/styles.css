@@ -15,6 +15,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -36,6 +37,7 @@ button:disabled {
 }
 
 input,
+select,
 textarea {
   width: 100%;
   border: 1px solid #bac8cd;
@@ -305,6 +307,47 @@ pre {
   gap: 16px;
 }
 
+.trust-profile-panel .panel-heading p {
+  margin-bottom: 0;
+}
+
+.trust-profile-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.trust-profile-form label {
+  color: #415158;
+  display: grid;
+  gap: 5px;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.trust-profile-form textarea,
+.trust-profile-form select {
+  font-weight: 400;
+}
+
+.trust-profile-form label:last-of-type,
+.trust-profile-actions {
+  grid-column: 1 / -1;
+}
+
+.trust-profile-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.trust-profile-actions span {
+  color: #627279;
+  font-size: 0.86rem;
+}
+
 .risk {
   align-self: start;
   border: 1px solid transparent;
@@ -436,8 +479,17 @@ pre {
   padding: 12px;
 }
 
-.scan-comparison h2 {
+.scan-comparison h2,
+.trust-context h2 {
   margin-bottom: 10px;
+}
+
+.trust-context {
+  border: 1px solid #d6dee1;
+  border-radius: 8px;
+  background: #f8fafb;
+  margin: -4px 0 14px;
+  padding: 12px;
 }
 
 .comparison-grid {
@@ -463,6 +515,63 @@ pre {
   grid-column: 1 / -1;
   border-top: 1px solid #e3e9eb;
   padding-top: 10px;
+}
+
+.trust-context-list,
+.trust-context-group {
+  display: grid;
+  gap: 6px;
+}
+
+.trust-context-group {
+  border-top: 1px solid #e3e9eb;
+  padding-top: 8px;
+}
+
+.trust-context-group:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.trust-context-item {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  color: #415158;
+  font-size: 0.86rem;
+}
+
+.trust-status {
+  border-radius: 999px;
+  background: #e8eef0;
+  color: #415158;
+  font-size: 0.74rem;
+  font-weight: 800;
+  padding: 2px 7px;
+  text-transform: uppercase;
+}
+
+.trust-status.expected {
+  background: #dff2dd;
+  color: #1f5f32;
+}
+
+.trust-status.unexpected,
+.trust-status.needs-review {
+  background: #ffe8bd;
+  color: #734a00;
+}
+
+.trust-status.missing-expected {
+  background: #dfe7e9;
+  color: #415158;
+}
+
+.trust-notes {
+  color: #415158;
+  font-size: 0.86rem;
+  margin-bottom: 0;
 }
 
 .scan-detail-toggles {
@@ -543,10 +652,6 @@ pre {
   padding: 14px;
 }
 
-.scan-card h3 {
-  margin-top: 0;
-}
-
 .scan-card-static-heading {
   align-items: flex-start;
   display: flex;
@@ -573,10 +678,6 @@ pre {
   display: grid;
   gap: 4px;
   min-height: 0;
-}
-
-.scan-card-empty p {
-  margin-bottom: 0;
 }
 
 .path-list {
@@ -615,11 +716,8 @@ pre {
 
 .finding {
   border-top: 1px solid #e3e9eb;
-  padding: 12px 0;
-}
-
-.compact-finding {
   margin-top: 10px;
+  padding: 12px 0;
 }
 
 .finding-heading {
@@ -632,7 +730,7 @@ pre {
   grid-column: 2;
 }
 
-.compact-finding code {
+.finding code {
   grid-column: 1 / -1;
 }
 
@@ -640,11 +738,6 @@ pre {
   display: grid;
   gap: 6px;
   margin-top: 10px;
-}
-
-.compact-finding p {
-  color: #415158;
-  margin-bottom: 0;
 }
 
 .finding-category {
@@ -664,6 +757,7 @@ pre {
 .finding p,
 .review-note,
 .good {
+  color: #415158;
   margin-bottom: 0;
 }
 
@@ -862,6 +956,7 @@ pre {
 
   .layout,
   .grid-form,
+  .trust-profile-form,
   .scan-section-grid,
   .comparison-grid {
     grid-template-columns: 1fr;
