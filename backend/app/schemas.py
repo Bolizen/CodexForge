@@ -9,6 +9,12 @@ class ProjectCreate(BaseModel):
     project_type: str = Field(default="", max_length=120)
 
 
+class ProjectRegister(BaseModel):
+    project_path: str = Field(min_length=1, max_length=1000)
+    description: str = Field(default="", max_length=2000)
+    project_type: str = Field(default="", max_length=120)
+
+
 class ProjectRootUpdate(BaseModel):
     project_root: str = Field(min_length=1, max_length=1000)
 

@@ -12,6 +12,14 @@ const EMPTY_AGENT_FORM = {
 };
 const MAJOR_SECTIONS = ["changelog", "scanReport", "agents", "notes", "history"];
 const OPEN_MAJOR_SECTIONS = Object.fromEntries(MAJOR_SECTIONS.map((section) => [section, true]));
+const SECTION_NAV = [
+  { id: "workspace", label: "Workspace Overview", icon: "#" },
+  { id: "projects", label: "Projects", icon: "[]" },
+  { id: "trustProfiles", label: "Trust Profiles", icon: "<>" },
+  { id: "reports", label: "Reports", icon: "=" },
+  { id: "changelog", label: "Changelog", icon: "@" },
+  { id: "settings", label: "Settings", icon: "*" },
+];
 const TRUST_PROFILE_FIELDS = [
   "trustedPackageManagers",
   "expectedManifestFiles",
@@ -77,7 +85,7 @@ function App() {
   const [selectedPath, setSelectedPath] = useState("");
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
-  const [createForm, setCreateForm] = useState({ project_name: "", description: "", project_type: "" });
+  const [createForm, setCreateForm] = useState({ project_name: "", existing_path: "", description: "", project_type: "" });
   const [agentForm, setAgentForm] = useState(EMPTY_AGENT_FORM);
   const [agentPreview, setAgentPreview] = useState("");
   const [agentsExists, setAgentsExists] = useState(false);
@@ -90,6 +98,9 @@ function App() {
   const [noteBody, setNoteBody] = useState("");
   const [changelog, setChangelog] = useState([]);
   const [majorSectionsOpen, setMajorSectionsOpen] = useState(OPEN_MAJOR_SECTIONS);
+  const [copyStatus, setCopyStatus] = useState("");
+  const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const [selectedSection, setSelectedSection] = useState("workspace");
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.path === selectedPath) || null,
@@ -101,7 +112,14 @@ function App() {
   );
   const displayedScan = selectedHistoryScan || scanResult || scanHistory[0] || null;
   const scanViewMode = selectedHistoryScan ? "history" : "latest";
-  const allMajorSectionsOpen = MAJOR_SECTIONS.every((section) => majorSectionsOpen[section]);
+  const displayedReport = useMemo(() => buildScanReport(displayedScan), [displayedScan]);
+  const displayedComparison = useMemo(() => buildScanComparisonFor(displayedScan, scanHistory), [displayedScan, scanHistory]);
+  const displayedTrustContext = useMemo(() => buildTrustProfileContext(displayedReport, trustProfile), [displayedReport, trustProfile]);
+  const displayedReportMarkdown = useMemo(
+    () => (displayedScan ? buildScanReportMarkdown(displayedScan, displayedReport, displayedComparison, displayedTrustContext) : ""),
+    [displayedScan, displayedReport, displayedComparison, displayedTrustContext],
+  );
+  const selectedSectionInfo = SECTION_NAV.find((section) => section.id === selectedSection) || SECTION_NAV[0];
 
   useEffect(() => {
     refreshProjects();
@@ -110,6 +128,8 @@ function App() {
 
   useEffect(() => {
     if (selectedPath) {
+      setTrustProfile({ ...EMPTY_TRUST_PROFILE, project_path: selectedPath });
+      setTrustProfileMessage("");
       loadNotes(selectedPath);
       loadScanHistory(selectedPath);
       loadTrustProfile(selectedPath);
@@ -117,8 +137,13 @@ function App() {
       setAgentPreview("");
       setScanResult(null);
       setSelectedScanId(null);
+      setCopyStatus("");
     }
   }, [selectedPath]);
+
+  useEffect(() => {
+    setCopyStatus("");
+  }, [displayedScan?.id]);
 
   async function refreshProjects() {
     setLoading(true);
@@ -152,11 +177,40 @@ function App() {
   async function createProject(event) {
     event.preventDefault();
     try {
-      const created = await api("/api/projects", { method: "POST", body: createForm });
+      const created = await api("/api/projects", {
+        method: "POST",
+        body: {
+          project_name: createForm.project_name,
+          description: createForm.description,
+          project_type: createForm.project_type,
+        },
+      });
       setMessage(`Created ${created.name}`);
-      setCreateForm({ project_name: "", description: "", project_type: "" });
+      setCreateForm({ project_name: "", existing_path: "", description: "", project_type: "" });
+      setCreateProjectOpen(false);
       await refreshProjects();
       setSelectedPath(created.path);
+    } catch (error) {
+      setMessage(error.message);
+    }
+  }
+
+  async function registerExistingProject(event) {
+    event.preventDefault();
+    try {
+      const registered = await api("/api/projects/register", {
+        method: "POST",
+        body: {
+          project_path: createForm.existing_path,
+          description: createForm.description,
+          project_type: createForm.project_type,
+        },
+      });
+      setMessage(`Registered ${registered.name}`);
+      setCreateForm({ project_name: "", existing_path: "", description: "", project_type: "" });
+      setCreateProjectOpen(false);
+      await refreshProjects();
+      setSelectedPath(registered.path);
     } catch (error) {
       setMessage(error.message);
     }
@@ -308,85 +362,444 @@ function App() {
     setMajorSectionsOpen((current) => (current[section] === open ? current : { ...current, [section]: open }));
   }
 
-  function toggleMajorSections() {
-    const nextOpen = !allMajorSectionsOpen;
-    setMajorSectionsOpen(Object.fromEntries(MAJOR_SECTIONS.map((section) => [section, nextOpen])));
+  function handleSidebarNav(event) {
+    const link = event.target.closest("a");
+    if (!link) return;
+    const section = {
+      "#workspace-overview": "workspace",
+      "#projects": "projects",
+      "#trust-profiles": "trustProfiles",
+      "#reports": "reports",
+      "#changelog": "changelog",
+      "#settings": "settings",
+    }[link.hash];
+    if (!section) return;
+    event.preventDefault();
+    setSelectedSection(section);
+  }
+
+  async function copyReportMarkdown() {
+    if (!displayedReportMarkdown) return;
+    if (!navigator.clipboard?.writeText) {
+      setCopyStatus("Clipboard unavailable. Use Export instead.");
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(displayedReportMarkdown);
+      setCopyStatus("Report Markdown copied.");
+    } catch {
+      setCopyStatus("Could not copy report Markdown.");
+    }
   }
 
   return (
     <main className="app-shell">
-      <header className="topbar">
-        <div>
-          <h1>CodexForge</h1>
-          <p>Local project dashboard for reviewing AI-generated coding work before you run anything.</p>
-        </div>
-        <div className="topbar-actions">
-          <button type="button" className="secondary-button" onClick={toggleMajorSections}>
-            {allMajorSectionsOpen ? "Collapse all" : "Expand all"}
-          </button>
-          <div className="root-pill" title={projectRoot}>{projectRoot || "Loading workspace root..."}</div>
-        </div>
-      </header>
-
-      {message && <div className="notice">{message}</div>}
-
-      {projectRootMessage && <div className="notice">{projectRootMessage}</div>}
-
-      <section className="layout">
-        <aside className="sidebar">
-          <div className="panel compact">
-            <h2>Create Project</h2>
-            <form onSubmit={createProject} className="stack">
-              <input value={createForm.project_name} onChange={(event) => setCreateForm({ ...createForm, project_name: event.target.value })} placeholder="Project name" required />
-              <input value={createForm.project_type} onChange={(event) => setCreateForm({ ...createForm, project_type: event.target.value })} placeholder="Project type" />
-              <textarea value={createForm.description} onChange={(event) => setCreateForm({ ...createForm, description: event.target.value })} placeholder="Description" rows="3" />
-              <button type="submit">Create</button>
-            </form>
+      <aside className="sidebar">
+        <div className="brand-block">
+          <div className="brand-mark">CF</div>
+          <div>
+            <h1>CodexForge</h1>
+            <p>Local Project Scanner</p>
           </div>
+        </div>
 
-          <div className="panel compact">
-            <h2>Projects</h2>
-            {loading ? <p className="muted">Loading...</p> : null}
-            <div className="project-list">
-              {projects.map((project) => (
-                <button
-                  key={project.path}
-                  className={`project-item ${project.path === selectedPath ? "selected" : ""}`}
-                  onClick={() => setSelectedPath(project.path)}
-                >
-                  <span className="project-name">{project.name}</span>
-                  <span className={`risk risk-${project.last_risk_level}`}>{project.last_risk_level}</span>
-                  <span className="project-path">{project.path}</span>
-                  <span className="project-meta">{project.notes_count} notes</span>
-                  <span className="project-meta scan-time">Scan: {formatDate(project.last_scan_time)}</span>
-                </button>
-              ))}
-              {!loading && projects.length === 0 ? <p className="muted">No project folders found.</p> : null}
-            </div>
+        <nav className={`sidebar-nav nav-${selectedSection}`} aria-label="Dashboard navigation" onClick={handleSidebarNav}>
+          {["Workspace Overview", "Projects", "Trust Profiles", "Reports", "Changelog", "Settings"].map((item, index) => (
+            <a className={index === 0 ? "active" : ""} href={`#${item.toLowerCase().replaceAll(" ", "-")}`} key={item}>
+              <span aria-hidden="true">{["⌂", "□", "◇", "▤", "◷", "⚙"][index]}</span>
+              {item}
+            </a>
+          ))}
+        </nav>
+
+        <div className="sidebar-section" id="projects">
+          <h2>Local Projects</h2>
+          {loading ? <p className="muted">Loading...</p> : null}
+          <div className="project-list">
+            {projects.map((project) => (
+              <button
+                key={project.path}
+                className={`project-item ${project.path === selectedPath ? "selected" : ""}`}
+                onClick={() => setSelectedPath(project.path)}
+              >
+                <span className="project-name">{project.name}</span>
+                <span className={`risk risk-${project.last_risk_level}`}>{project.last_risk_level}</span>
+                <span className="project-path">{project.path}</span>
+                <span className="project-meta">{project.notes_count} notes</span>
+                <span className="project-meta scan-time">{formatDate(project.last_scan_time)}</span>
+              </button>
+            ))}
+            {!loading && projects.length === 0 ? <p className="muted">No project folders found.</p> : null}
           </div>
+        </div>
 
-          <Changelog entries={changelog} open={majorSectionsOpen.changelog} onOpenChange={(open) => setMajorSectionOpen("changelog", open)} />
-        </aside>
+        <div className="scanner-status">
+          <span className="status-dot"></span>
+          <div>
+            <strong>Scanner ready</strong>
+            <p>All systems operational</p>
+          </div>
+        </div>
+      </aside>
+
+      <section className="workspace">
+        <header className="topbar" id="workspace-overview">
+          <div>
+            <h1>{selectedSectionInfo.label}</h1>
+            <p>Local project dashboard for reviewing coding work before you run anything.</p>
+          </div>
+          <div className="topbar-actions">
+            <button type="button" className="secondary-button" onClick={() => exportScanReport(displayedReportMarkdown)} disabled={!displayedReportMarkdown}>
+              Export Report
+            </button>
+            <button type="button" className="secondary-button" onClick={copyReportMarkdown} disabled={!displayedReportMarkdown}>
+              Copy Markdown
+            </button>
+            <button type="button" className="run-scan-button" onClick={runScan} disabled={!selectedPath}>
+              Run Scan
+            </button>
+          </div>
+        </header>
+
+        {message && <div className="notice">{message}</div>}
+        {copyStatus && <div className="notice subtle-notice">{copyStatus}</div>}
+        {projectRootMessage && <div className="notice">{projectRootMessage}</div>}
+        <div className="workspace-root-line" title={selectedProject?.path || projectRoot}>
+          Workspace: {selectedProject?.name || "No project selected"} <span>Path: {selectedProject?.path || projectRoot || "Loading workspace root..."}</span>
+        </div>
 
         <section className="content">
-          {selectedProject ? (
+          {selectedSection === "workspace" && selectedProject ? (
             <>
-              <ProjectHeader project={selectedProject} onScan={runScan} />
-              <TrustProfilePanel profile={trustProfile} message={trustProfileMessage} onSave={saveTrustProfile} />
-              <ScanReport result={displayedScan} scans={scanHistory} trustProfile={trustProfile} viewMode={scanViewMode} open={majorSectionsOpen.scanReport} onOpenChange={(open) => setMajorSectionOpen("scanReport", open)} />
-              <AgentGenerator form={agentForm} updateField={updateAgentField} preview={agentPreview} exists={agentsExists} onPreview={previewAgents} onWrite={writeAgents} open={majorSectionsOpen.agents} onOpenChange={(open) => setMajorSectionOpen("agents", open)} />
-              <Notes notes={notes} noteBody={noteBody} setNoteBody={setNoteBody} onAdd={addNote} open={majorSectionsOpen.notes} onOpenChange={(open) => setMajorSectionOpen("notes", open)} />
+              <SummaryCards projects={projects} report={displayedReport} result={displayedScan} comparison={displayedComparison} />
+              <section className="dashboard-grid">
+                <OverallRiskPanel report={displayedReport} result={displayedScan} trustProfile={trustProfile} />
+                <FindingsOverview report={displayedReport} />
+                <ProjectExpectationsSummary profile={trustProfile} onEdit={() => setSelectedSection("trustProfiles")} />
+                <RecentActivity changelog={changelog} scans={scanHistory} />
+              </section>
+            </>
+          ) : null}
+
+          {selectedSection === "projects" ? (
+            <ProjectsSection projects={projects} selectedPath={selectedPath} onSelectProject={setSelectedPath} onNewProject={() => setCreateProjectOpen(true)} loading={loading} />
+          ) : null}
+
+          {selectedSection === "trustProfiles" && selectedProject ? (
+            <TrustProfilePanel profile={trustProfile} message={trustProfileMessage} onSave={saveTrustProfile} />
+          ) : null}
+
+          {selectedSection === "reports" && selectedProject ? (
+            <>
+              <ScanReport
+                result={displayedScan}
+                report={displayedReport}
+                comparison={displayedComparison}
+                trustContext={displayedTrustContext}
+                viewMode={scanViewMode}
+                open={majorSectionsOpen.scanReport}
+                onOpenChange={(open) => setMajorSectionOpen("scanReport", open)}
+              />
               <History scans={scanHistory} selectedScanId={selectedScanId} onSelectScan={setSelectedScanId} open={majorSectionsOpen.history} onOpenChange={(open) => setMajorSectionOpen("history", open)} />
             </>
-          ) : (
+          ) : null}
+
+          {selectedSection === "changelog" ? (
+            <>
+              <RecentActivity changelog={changelog} scans={scanHistory} />
+              <Changelog entries={changelog} open={majorSectionsOpen.changelog} onOpenChange={(open) => setMajorSectionOpen("changelog", open)} />
+            </>
+          ) : null}
+
+          {selectedSection === "settings" ? (
+            <>
+              <SettingsSection projectRoot={projectRoot} selectedProject={selectedProject} />
+              {selectedProject ? (
+                <>
+                  <AgentGenerator form={agentForm} updateField={updateAgentField} preview={agentPreview} exists={agentsExists} onPreview={previewAgents} onWrite={writeAgents} open={majorSectionsOpen.agents} onOpenChange={(open) => setMajorSectionOpen("agents", open)} />
+                  <Notes notes={notes} noteBody={noteBody} setNoteBody={setNoteBody} onAdd={addNote} open={majorSectionsOpen.notes} onOpenChange={(open) => setMajorSectionOpen("notes", open)} />
+                </>
+              ) : null}
+            </>
+          ) : null}
+
+          {!selectedProject && selectedSection !== "projects" ? (
             <div className="panel empty-state">
               <h2>No Project Selected</h2>
-              <p>Create a project or add folders under the configured workspace root.</p>
+              <p>Create a project or select a folder under the configured workspace root.</p>
             </div>
-          )}
+          ) : null}
         </section>
       </section>
+      {createProjectOpen ? (
+        <CreateProjectModal
+          form={createForm}
+          setForm={setCreateForm}
+          onSubmit={createProject}
+          onRegister={registerExistingProject}
+          onClose={() => setCreateProjectOpen(false)}
+        />
+      ) : null}
     </main>
+  );
+}
+
+function SummaryCards({ projects, report, result, comparison }) {
+  const highestSeverity = highestFindingSeverity(result?.findings || []) || "none";
+  const cards = [
+    { label: "Risk Level", value: formatRiskLabel(result?.overall_risk), detail: "Current scan", icon: "◇", risk: result?.overall_risk || "none" },
+    { label: "Projects", value: projects.length, detail: "In this workspace", icon: "▣" },
+    { label: "Findings", value: report.totalFindings, detail: report.totalFindings ? "Review prompts found" : "No issues detected", icon: "⌕" },
+    { label: "Highest Severity", value: formatRiskLabel(highestSeverity), detail: highestSeverity === "none" ? "No issues detected" : "Highest finding level", icon: "△", risk: highestSeverity },
+    { label: "Last Scan", value: formatDate(result?.scan_date), detail: result ? "Completed successfully" : "Never scanned", icon: "◷" },
+    { label: "Changed Since Last Scan", value: comparison?.riskChange || "No previous scan", detail: comparison?.findingDelta || "Baseline not established", icon: "▤" },
+  ];
+
+  return (
+    <section className="summary-cards">
+      {cards.map((card) => (
+        <article className="summary-card" key={card.label}>
+          <span className="summary-icon">{card.icon}</span>
+          <div>
+            <span className="summary-label">{card.label}</span>
+            <strong className={card.risk ? `summary-value risk-text-${card.risk}` : "summary-value"}>{card.value}</strong>
+            <small>{card.detail}</small>
+          </div>
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function CreateProjectModal({ form, setForm, onSubmit, onRegister, onClose }) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="new-project-title">
+        <div className="panel-heading">
+          <div>
+            <h2 id="new-project-title">Add Project</h2>
+            <p className="muted">Register an existing folder or create a new folder inside the workspace root.</p>
+          </div>
+          <button type="button" className="secondary-button modal-close" onClick={onClose}>Close</button>
+        </div>
+        <form onSubmit={onRegister} className="stack project-action-form">
+          <h3>Add Existing Folder</h3>
+          <input value={form.existing_path} onChange={(event) => setForm({ ...form, existing_path: event.target.value })} placeholder="Absolute folder path inside the workspace root" required />
+          <input value={form.project_type} onChange={(event) => setForm({ ...form, project_type: event.target.value })} placeholder="Project type" />
+          <textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="Description" rows="2" />
+          <button type="submit">Add Existing Folder</button>
+        </form>
+        <form onSubmit={onSubmit} className="stack project-action-form">
+          <h3>Create New Folder</h3>
+          <input value={form.project_name} onChange={(event) => setForm({ ...form, project_name: event.target.value })} placeholder="Project name" required />
+          <input value={form.project_type} onChange={(event) => setForm({ ...form, project_type: event.target.value })} placeholder="Project type" />
+          <textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="Description" rows="3" />
+          <button type="submit">Create New Folder</button>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function ProjectsSection({ projects, selectedPath, onSelectProject, onNewProject, loading }) {
+  return (
+    <section className="panel projects-section">
+      <div className="panel-heading">
+        <div>
+          <h2>Projects</h2>
+          <p className="muted">Registered project folders can be selected, scanned, and reviewed independently.</p>
+        </div>
+        <button type="button" className="new-project-button inline-action" onClick={onNewProject}>Add Project</button>
+      </div>
+      {loading ? <p className="muted">Loading projects...</p> : null}
+      <div className="projects-table">
+        <div className="projects-table-header">
+          <span>Name</span>
+          <span>Risk</span>
+          <span>Notes</span>
+          <span>Last Scan</span>
+          <span>Action</span>
+        </div>
+        {projects.map((project) => (
+          <div className="projects-table-row" key={project.path}>
+            <div>
+              <strong>{project.name}</strong>
+              <span>{project.path}</span>
+            </div>
+            <span className={`risk risk-${project.last_risk_level}`}>{project.last_risk_level}</span>
+            <span>{project.notes_count}</span>
+            <span>{formatDate(project.last_scan_time)}</span>
+            <button type="button" className="history-view-button" onClick={() => onSelectProject(project.path)}>
+              {selectedPath === project.path ? "Selected" : "Select"}
+            </button>
+          </div>
+        ))}
+      </div>
+      {!loading && projects.length === 0 ? <p className="muted">No project folders found.</p> : null}
+    </section>
+  );
+}
+
+function ProjectExpectationsSummary({ profile, onEdit }) {
+  const rows = [
+    ["Package managers", profileList(profile, "trustedPackageManagers")],
+    ["Expected manifests", profileList(profile, "expectedManifestFiles")],
+    ["Expected lockfiles", profileList(profile, "expectedLockfiles")],
+    ["Allowed lifecycle scripts", profileList(profile, "allowedLifecycleScripts")],
+    ["Reviewed paths", profileList(profile, "reviewedPaths")],
+    ["Ignored paths", profileList(profile, "ignoredPaths")],
+    ["Risk tolerance", [profile.riskTolerance || "normal"]],
+  ];
+  const visibleRows = rows.filter(([label, values]) => label === "Risk tolerance" || values.length > 0);
+  const displayRows = visibleRows.length > 1 ? visibleRows : rows;
+
+  return (
+    <section className="panel overview-panel trust-profile-panel">
+      <div className="panel-heading">
+        <div>
+          <h2>Project Expectations</h2>
+          <p className="muted">Trust profile summary for the selected project.</p>
+        </div>
+        <button type="button" className="secondary-button compact-action" onClick={onEdit}>Edit Trust Profile</button>
+      </div>
+      <div className="expectations-grid">
+        {displayRows.map(([label, values]) => (
+          <div className="expectation-row" key={label}>
+            <strong>{label}</strong>
+            <span className={values?.length ? "" : "empty-value"}>{values?.length ? values.join(", ") : "Not set"}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function SettingsSection({ projectRoot, selectedProject }) {
+  return (
+    <section className="panel settings-section">
+      <div className="panel-heading">
+        <div>
+          <h2>Settings</h2>
+          <p className="muted">Local workspace context. Configuration editing remains intentionally limited in this view.</p>
+        </div>
+      </div>
+      <div className="settings-list">
+        <div>
+          <strong>Workspace root</strong>
+          <span>{projectRoot || "Loading workspace root..."}</span>
+        </div>
+        <div>
+          <strong>Selected project</strong>
+          <span>{selectedProject?.path || "No project selected"}</span>
+        </div>
+        <div>
+          <strong>Runtime model</strong>
+          <span>Local scanner, local SQLite storage, no cloud sync.</span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function OverallRiskPanel({ report, result, trustProfile }) {
+  const risk = result?.overall_risk || "none";
+  const reasons = buildRiskReasons(report, risk);
+  const metrics = [
+    ["Reviewed files", report.reviewedFileCount],
+    ["Ignored files", report.ignoredFileCount],
+    ["Manifests", report.manifests.length],
+    ["Lockfiles", report.lockfiles.length],
+  ];
+  return (
+    <section className="panel overview-panel overall-risk-panel">
+      <div className="panel-heading">
+        <div>
+          <h2>Overall Risk</h2>
+          <p className="muted">Current scanner result and review context.</p>
+        </div>
+      </div>
+      <div className="risk-hero">
+        <div className={`risk-ring risk-ring-${risk}`}>
+          <strong>{formatRiskLabel(risk)}</strong>
+          <span>{report.totalFindings}</span>
+          <small>Findings</small>
+        </div>
+        <div className="risk-reasons">
+          <p>{risk === "none" ? "No scanner findings contributed to risk." : "Review the current scan before running project code."}</p>
+          <div className="risk-metrics">
+            {metrics.map(([label, value]) => (
+              <div key={label}>
+                <strong>{value}</strong>
+                <span>{label}</span>
+              </div>
+            ))}
+          </div>
+          <ul>
+            {reasons.slice(0, 4).map((reason) => (
+              <li key={reason}>{reason}</li>
+            ))}
+            <li>Risk tolerance: {trustProfile.riskTolerance || "normal"}</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function FindingsOverview({ report }) {
+  const rows = scanCategoryRows(report);
+  return (
+    <section className="panel overview-panel findings-overview">
+      <div className="panel-heading">
+        <div>
+          <h2>Scan Report / Findings Overview</h2>
+          <p className="muted">Results from the displayed scan across all categories.</p>
+        </div>
+      </div>
+      <div className="category-table">
+        <div className="category-header">
+          <span>Category</span>
+          <span>Findings</span>
+          <span>Status</span>
+        </div>
+        {rows.map((row) => (
+          <div className="category-row" key={row.label}>
+            <span>{row.label}</span>
+            <strong>{row.count}</strong>
+            <span className={row.count ? "status-review" : "status-clean"}>{row.count ? "Review" : "Clean"}</span>
+          </div>
+        ))}
+      </div>
+      {report.totalFindings === 0 ? <p className="good overview-good">No findings detected in the latest scan. Review generated code before running it.</p> : null}
+    </section>
+  );
+}
+
+function RecentActivity({ changelog, scans }) {
+  return (
+    <section className="panel overview-panel recent-activity" id="changelog">
+      <div className="panel-heading">
+        <div>
+          <h2>Changelog / Recent Activity</h2>
+          <p className="muted">What changed in CodexForge and recent local scan activity.</p>
+        </div>
+      </div>
+      <div className="activity-list">
+        {changelog.slice(0, 4).map((entry) => (
+          <div className="activity-row" key={entry.version}>
+            <span>{entry.version}</span>
+            <strong>{entry.title}</strong>
+          </div>
+        ))}
+        {scans.slice(0, 3).map((scan) => (
+          <div className="activity-row" key={`scan-${scan.id}`}>
+            <span>{formatRiskLabel(scan.overall_risk)}</span>
+            <strong>Scan completed {formatDate(scan.scan_date)}</strong>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -448,7 +861,7 @@ function TrustProfilePanel({ profile, message, onSave }) {
   }
 
   return (
-    <section className="panel trust-profile-panel">
+    <section className="panel trust-profile-panel" id="trust-profiles">
       <div className="panel-heading">
         <div>
           <h2>Trust Profile</h2>
@@ -483,37 +896,9 @@ function TrustProfilePanel({ profile, message, onSave }) {
   );
 }
 
-function ScanReport({ result, scans, trustProfile, viewMode, open, onOpenChange }) {
-  const [copyStatus, setCopyStatus] = useState("");
-  const report = useMemo(() => buildScanReport(result), [result]);
-  const comparison = useMemo(() => buildScanComparisonFor(result, scans), [result, scans]);
-  const trustContext = useMemo(() => buildTrustProfileContext(report, trustProfile), [report, trustProfile]);
-  const reportMarkdown = useMemo(
-    () => (result ? buildScanReportMarkdown(result, report, comparison, trustContext) : ""),
-    [result, report, comparison, trustContext],
-  );
-
-  useEffect(() => {
-    setCopyStatus("");
-  }, [result?.id]);
-
-  async function copyReportMarkdown() {
-    if (!reportMarkdown) return;
-    if (!navigator.clipboard?.writeText) {
-      setCopyStatus("Clipboard unavailable. Use Export instead.");
-      return;
-    }
-
-    try {
-      await navigator.clipboard.writeText(reportMarkdown);
-      setCopyStatus("Report Markdown copied.");
-    } catch {
-      setCopyStatus("Could not copy report Markdown.");
-    }
-  }
-
+function ScanReport({ result, report, comparison, trustContext, viewMode, open, onOpenChange }) {
   return (
-    <details className="panel section-toggle" open={open} onToggle={(event) => onOpenChange(event.currentTarget.open)}>
+    <details className="panel section-toggle" id="reports" open={open} onToggle={(event) => onOpenChange(event.currentTarget.open)}>
       <summary className="section-summary">
         <span className="section-caret" aria-hidden="true"></span>
         <div>
@@ -530,15 +915,6 @@ function ScanReport({ result, scans, trustProfile, viewMode, open, onOpenChange 
           <div className="scan-view-label">
             {viewMode === "history" ? `Viewing history scan from ${formatDate(result.scan_date)}` : `Viewing latest scan from ${formatDate(result.scan_date)}`}
           </div>
-          <div className="scan-actions">
-            <button type="button" className="secondary-button" onClick={() => exportScanReport(reportMarkdown)}>
-              Export scan-report.md
-            </button>
-            <button type="button" className="secondary-button" onClick={copyReportMarkdown}>
-              Copy report Markdown
-            </button>
-          </div>
-          {copyStatus ? <p className="copy-status">{copyStatus}</p> : null}
           <RiskExplanation report={report} risk={result.overall_risk} />
           <ScanComparison comparison={comparison} />
           <TrustProfileContext context={trustContext} />
@@ -1059,6 +1435,23 @@ function buildScanReport(result) {
 function scanArray(result, field) {
   const value = result?.[field];
   return Array.isArray(value) ? value : [];
+}
+
+function profileList(profile, field) {
+  return scanArray(profile, field);
+}
+
+function scanCategoryRows(report) {
+  return [
+    { label: "Manifests", count: report.manifests.length },
+    { label: "Lockfiles", count: report.lockfiles.length },
+    { label: "Lifecycle Scripts", count: report.lifecycleScripts.length },
+    { label: "Secret Findings", count: report.secretFindings.length },
+    { label: "Executable Files", count: report.executableFindings.length },
+    { label: "Zone / Metadata Findings", count: report.metadataFindings.length },
+    { label: "Reviewed Files", count: report.reviewedFileCount },
+    { label: "Ignored Files", count: report.ignoredFileCount },
+  ];
 }
 
 function buildTrustProfileContext(report, profile = EMPTY_TRUST_PROFILE) {

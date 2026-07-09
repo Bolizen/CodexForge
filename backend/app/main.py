@@ -21,7 +21,7 @@ from .database import (
 )
 from .safety import configured_root, ensure_inside_root, ensure_project_directory, sanitize_folder_name
 from .scanner import scan_project
-from .schemas import AgentPreviewRequest, NoteCreate, ProjectCreate, ProjectPathRequest, ProjectRootUpdate, TrustProfileRequest
+from .schemas import AgentPreviewRequest, NoteCreate, ProjectCreate, ProjectPathRequest, ProjectRegister, ProjectRootUpdate, TrustProfileRequest
 
 
 app = FastAPI(title="CodexForge API")
@@ -77,23 +77,29 @@ def list_projects() -> dict[str, object]:
     root = _project_root()
     scans = latest_scan_map()
     counts = note_counts()
-    metadata = _project_metadata()
 
     projects = []
     root_exists = root.exists()
     if root_exists:
-        for child in sorted(root.iterdir(), key=lambda path: path.name.lower()):
-            if not child.is_dir():
+        with get_connection() as connection:
+            rows = connection.execute(
+                "SELECT path, name, description, project_type FROM projects ORDER BY name COLLATE NOCASE"
+            ).fetchall()
+        for row in rows:
+            try:
+                project_path = ensure_inside_root(root, row["path"])
+            except HTTPException:
                 continue
-            path = str(child.resolve())
+            if not project_path.exists() or not project_path.is_dir():
+                continue
+            path = str(project_path)
             scan = scans.get(path)
-            project_meta = metadata.get(path, {})
             projects.append(
                 {
-                    "name": project_meta.get("name") or child.name,
+                    "name": row["name"],
                     "path": path,
-                    "description": project_meta.get("description", ""),
-                    "project_type": project_meta.get("project_type", ""),
+                    "description": row["description"],
+                    "project_type": row["project_type"],
                     "last_scan_time": scan["scan_date"] if scan else None,
                     "last_risk_level": scan["overall_risk"] if scan else "none",
                     "notes_count": counts.get(path, 0),
@@ -127,6 +133,19 @@ def create_project(payload: ProjectCreate) -> dict[str, str]:
         )
 
     return {"name": payload.project_name.strip(), "path": str(project_path), "created_at": now}
+
+
+@app.post("/api/projects/register")
+def register_project(payload: ProjectRegister) -> dict[str, str]:
+    project_path = ensure_project_directory(_project_root(), payload.project_path)
+    now = _now()
+    with get_connection() as connection:
+        connection.execute(
+            "INSERT INTO projects (path, name, description, project_type, created_at) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(path) DO UPDATE SET description = excluded.description, project_type = excluded.project_type",
+            (str(project_path), project_path.name, payload.description.strip(), payload.project_type.strip(), now),
+        )
+    return {"name": project_path.name, "path": str(project_path), "created_at": now}
 
 
 @app.post("/api/agents/preview")
@@ -302,13 +321,12 @@ def _project_root() -> Path:
 
 
 def _ensure_project(project_path: str) -> Path:
-    return ensure_project_directory(_project_root(), project_path)
-
-
-def _project_metadata() -> dict[str, dict[str, str]]:
+    project = ensure_project_directory(_project_root(), project_path)
     with get_connection() as connection:
-        rows = connection.execute("SELECT path, name, description, project_type FROM projects").fetchall()
-    return {row["path"]: dict(row) for row in rows}
+        row = connection.execute("SELECT 1 FROM projects WHERE path = ?", (str(project),)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Project folder is not registered in CodexForge.")
+    return project
 
 
 def _agent_content(payload: AgentPreviewRequest) -> str:
