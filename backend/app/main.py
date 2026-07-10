@@ -165,16 +165,24 @@ def agents_exists(project_path: str = Query(min_length=1, max_length=1000)) -> d
 def write_agents(payload: AgentPreviewRequest) -> dict[str, object]:
     project = _ensure_project(payload.project_path)
     agents_path = _agents_path(project)
-    if agents_path.exists() and not payload.overwrite:
+    content = _agent_content(payload)
+
+    try:
+        if payload.overwrite:
+            agents_path.write_text(content, encoding="utf-8")
+        else:
+            with agents_path.open("x", encoding="utf-8", newline="\n") as agents_file:
+                agents_file.write(content)
+    except FileExistsError:
         return {
             "written": False,
             "confirmation_required": True,
             "path": str(agents_path),
             "message": "AGENTS.md already exists. Confirm overwrite to write a new version.",
         }
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail="AGENTS.md could not be written.") from exc
 
-    content = _agent_content(payload)
-    agents_path.write_text(content, encoding="utf-8")
     return {
         "written": True,
         "confirmation_required": False,
@@ -340,11 +348,16 @@ def _agent_content(payload: AgentPreviewRequest) -> str:
 
 
 def _agents_path(project: Path) -> Path:
-    agents_path = ensure_inside_root(_project_root(), project / "AGENTS.md")
+    agents_path = project / "AGENTS.md"
+    validated_path = ensure_inside_root(_project_root(), agents_path)
     try:
-        agents_path.relative_to(project)
+        validated_path.relative_to(project)
     except ValueError as exc:
         raise HTTPException(status_code=403, detail="AGENTS.md target is outside the selected project folder.") from exc
+    if validated_path != agents_path:
+        raise HTTPException(status_code=403, detail="AGENTS.md target was redirected.")
+    if agents_path.exists() and not agents_path.is_file():
+        raise HTTPException(status_code=409, detail="AGENTS.md target exists but is not a regular file.")
     return agents_path
 
 

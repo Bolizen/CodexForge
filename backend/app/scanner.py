@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from .safety import is_reparse_point_or_symlink
+
 
 RISK_ORDER = {"none": 0, "low": 1, "medium": 2, "high": 3}
 MANIFESTS = {"package.json", "requirements.txt", "pyproject.toml"}
@@ -68,19 +70,38 @@ def scan_project(project_path: Path) -> dict[str, Any]:
     secret_files: list[str] = []
     ignored_files: list[str] = []
     reviewed_files: list[str] = []
-    ignore_patterns = _load_ignore_patterns(project_path)
+    ignore_patterns, ignore_finding = _load_ignore_patterns(project_path)
+    reported_linked_paths: set[str] = set()
+    if ignore_finding:
+        findings.append(ignore_finding)
+        reported_linked_paths.add(ignore_finding["path"])
 
-    for current_root, dirs, files in os.walk(project_path):
-        dirs[:] = [
-            name
-            for name in dirs
-            if name.lower() not in SKIP_DIRS and not _is_reparse_point_or_symlink(Path(current_root) / name)
-        ]
+    for current_root, dirs, files in os.walk(project_path, followlinks=False):
         root_path = Path(current_root)
+        safe_dirs = []
+        for dirname in dirs:
+            directory_path = root_path / dirname
+            relative_path = _relative_path(directory_path, project_path)
+            if is_reparse_point_or_symlink(directory_path):
+                if relative_path not in reported_linked_paths:
+                    findings.append(_linked_path_finding(relative_path))
+                    reported_linked_paths.add(relative_path)
+                continue
+            if dirname.lower() in SKIP_DIRS:
+                continue
+            safe_dirs.append(dirname)
+        dirs[:] = safe_dirs
 
         for filename in files:
             file_path = root_path / filename
             relative_path = _relative_path(file_path, project_path)
+
+            if is_reparse_point_or_symlink(file_path):
+                if relative_path not in reported_linked_paths:
+                    findings.append(_linked_path_finding(relative_path))
+                    reported_linked_paths.add(relative_path)
+                continue
+
             if relative_path in ignore_patterns:
                 ignored_files.append(relative_path)
                 continue
@@ -192,12 +213,17 @@ def _scan_text_patterns(file_path: Path, relative_path: str) -> list[dict[str, s
     return findings
 
 
-def _load_ignore_patterns(project_path: Path) -> set[str]:
+def _load_ignore_patterns(
+    project_path: Path,
+) -> tuple[set[str], dict[str, str] | None]:
     ignore_path = project_path / IGNORE_FILE_NAME
+    if is_reparse_point_or_symlink(ignore_path):
+        return set(), _linked_path_finding(IGNORE_FILE_NAME)
+
     try:
         lines = ignore_path.read_text(encoding="utf-8").splitlines()
     except OSError:
-        return set()
+        return set(), None
 
     patterns = set()
     for line in lines:
@@ -205,7 +231,7 @@ def _load_ignore_patterns(project_path: Path) -> set[str]:
         if not pattern or pattern.startswith("#"):
             continue
         patterns.add(pattern.replace("\\", "/"))
-    return patterns
+    return patterns, None
 
 
 def _relative_path(file_path: Path, project_path: Path) -> str:
@@ -219,6 +245,15 @@ def _finding(path: str, finding_type: str, severity: str, explanation: str) -> d
         "severity": severity,
         "explanation": explanation,
     }
+
+
+def _linked_path_finding(path: str) -> dict[str, str]:
+    return _finding(
+        path,
+        "symlink-or-reparse-point",
+        "high",
+        "Linked filesystem entry was not scanned because it may lead outside the selected project.",
+    )
 
 
 def _overall_risk(
@@ -261,12 +296,3 @@ def _infer_zone(project_path: Path) -> str:
         if zone:
             return zone
     return "Unknown"
-
-
-def _is_reparse_point_or_symlink(path: Path) -> bool:
-    try:
-        if path.is_symlink():
-            return True
-        return bool(path.stat(follow_symlinks=False).st_file_attributes & 0x400)
-    except (AttributeError, OSError):
-        return False
