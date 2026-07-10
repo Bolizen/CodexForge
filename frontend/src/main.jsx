@@ -1,6 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { isAbortError, requestIsCurrent } from "./projectRequests.js";
+import {
+  isAbortError,
+  projectListRequestIsCurrent,
+  requestIsCurrent,
+} from "./projectRequests.js";
 import "./styles.css";
 
 const API_BASE = "http://127.0.0.1:8000";
@@ -105,6 +109,7 @@ function App() {
   const [selectedSection, setSelectedSection] = useState("workspace");
   const selectedPathRef = useRef("");
   const projectGenerationRef = useRef(0);
+  const projectsRequestRef = useRef({ id: 0, controller: null });
 
   const selectedProject = useMemo(
     () => projects.find((project) => project.path === selectedPath) || null,
@@ -189,10 +194,32 @@ function App() {
     );
   }
 
-  async function refreshProjects() {
+  async function refreshProjects(
+    requestPath = null,
+    requestGeneration = null,
+  ) {
+    const requestId = projectsRequestRef.current.id + 1;
+    projectsRequestRef.current.controller?.abort();
+    const controller = new AbortController();
+    projectsRequestRef.current = { id: requestId, controller };
+
+    const responseIsCurrent = () =>
+      projectListRequestIsCurrent(
+        projectsRequestRef.current.id,
+        requestId,
+        selectedPathRef.current,
+        projectGenerationRef.current,
+        requestPath,
+        requestGeneration,
+      );
+
     setLoading(true);
     try {
-      const data = await api("/api/projects");
+      const data = await api("/api/projects", {
+        signal: controller.signal,
+      });
+      if (!responseIsCurrent()) return;
+
       setProjectRoot(data.project_root);
       setProjectRootMessage(data.message || "");
       setProjects(data.projects);
@@ -205,9 +232,13 @@ function App() {
         selectProject("");
       }
     } catch (error) {
-      setMessage(error.message);
+      if (!isAbortError(error) && responseIsCurrent()) {
+        setMessage(error.message);
+      }
     } finally {
-      setLoading(false);
+      if (projectsRequestRef.current.id === requestId) {
+        setLoading(false);
+      }
     }
   }
 
@@ -348,7 +379,7 @@ function App() {
       setMessage("Scan complete. Review the findings below.");
       await loadScanHistory(projectPath, generation);
       if (!projectRequestIsCurrent(projectPath, generation)) return;
-      await refreshProjects();
+      await refreshProjects(projectPath, generation);
     } catch (error) {
       if (!isAbortError(error) && projectRequestIsCurrent(projectPath, generation)) {
         setMessage(error.message);
@@ -422,11 +453,13 @@ function App() {
     if (!projectPath || !noteBody.trim()) return;
     try {
       await api("/api/notes", { method: "POST", body: { project_path: projectPath, body: noteBody } });
-      if (projectRequestIsCurrent(projectPath, generation)) {
-        setNoteBody("");
-        await loadNotes(projectPath, generation);
-      }
-      await refreshProjects();
+      if (!projectRequestIsCurrent(projectPath, generation)) return;
+
+      setNoteBody("");
+      await loadNotes(projectPath, generation);
+      if (!projectRequestIsCurrent(projectPath, generation)) return;
+
+      await refreshProjects(projectPath, generation);
     } catch (error) {
       if (!isAbortError(error) && projectRequestIsCurrent(projectPath, generation)) {
         setMessage(error.message);

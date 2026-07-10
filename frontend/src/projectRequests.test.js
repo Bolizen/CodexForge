@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { isAbortError, requestIsCurrent } from "./projectRequests.js";
+import {
+  isAbortError,
+  projectListRequestIsCurrent,
+  requestIsCurrent,
+} from "./projectRequests.js";
 
 test("accepts a response only for the current project generation", () => {
   assert.equal(requestIsCurrent("project-a", 4, "project-a", 4), true);
@@ -13,6 +17,48 @@ test("rejects a response from a previously selected project", () => {
 
 test("rejects an old response after switching away and back", () => {
   assert.equal(requestIsCurrent("project-a", 6, "project-a", 4), false);
+});
+
+test("rejects an older project-list response", () => {
+  assert.equal(
+    projectListRequestIsCurrent(
+      8,
+      7,
+      "project-a",
+      4,
+      "project-a",
+      4,
+    ),
+    false,
+  );
+});
+
+test("rejects a project-list response after switching projects", () => {
+  assert.equal(
+    projectListRequestIsCurrent(
+      8,
+      8,
+      "project-b",
+      5,
+      "project-a",
+      4,
+    ),
+    false,
+  );
+});
+
+test("accepts the latest global project-list response", () => {
+  assert.equal(
+    projectListRequestIsCurrent(
+      8,
+      8,
+      "project-b",
+      5,
+      null,
+      null,
+    ),
+    true,
+  );
 });
 
 test("identifies abort errors without treating ordinary failures as aborts", () => {
