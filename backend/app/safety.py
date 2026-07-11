@@ -34,7 +34,12 @@ def configured_root(root_value: str) -> Path:
         raise HTTPException(status_code=400, detail="Workspace root could not be resolved.") from exc
 
 
-def ensure_inside_root(workspace_root: Path, candidate: str | Path) -> Path:
+def ensure_inside_root(
+    workspace_root: Path,
+    candidate: str | Path,
+    *,
+    raise_on_inspection_error: bool = False,
+) -> Path:
     root = workspace_root.resolve()
     try:
         path = Path(candidate).expanduser()
@@ -52,17 +57,21 @@ def ensure_inside_root(workspace_root: Path, candidate: str | Path) -> Path:
         absolute = Path(os.path.abspath(path))
         relative = absolute.relative_to(root)
     except (OSError, RuntimeError, ValueError) as exc:
+        if raise_on_inspection_error and isinstance(exc, OSError):
+            raise
         raise HTTPException(status_code=403, detail="Path is outside the configured workspace root.") from exc
 
     current = root
     for part in relative.parts:
         current /= part
-        if is_reparse_point_or_symlink(current):
+        if is_reparse_point_or_symlink(current, raise_on_error=raise_on_inspection_error):
             raise HTTPException(status_code=403, detail="Symlinks and junctions are not allowed in project paths.")
 
     try:
         resolved = absolute.resolve()
     except (OSError, RuntimeError, ValueError) as exc:
+        if raise_on_inspection_error and isinstance(exc, OSError):
+            raise
         raise HTTPException(status_code=400, detail="Path could not be resolved.") from exc
     try:
         resolved.relative_to(root)
@@ -71,8 +80,17 @@ def ensure_inside_root(workspace_root: Path, candidate: str | Path) -> Path:
     return resolved
 
 
-def ensure_project_directory(workspace_root: Path, project_path: str) -> Path:
-    resolved = ensure_inside_root(workspace_root, project_path)
+def ensure_project_directory(
+    workspace_root: Path,
+    project_path: str,
+    *,
+    raise_on_inspection_error: bool = False,
+) -> Path:
+    resolved = ensure_inside_root(
+        workspace_root,
+        project_path,
+        raise_on_inspection_error=raise_on_inspection_error,
+    )
     if resolved == workspace_root:
         raise HTTPException(status_code=400, detail="Select a project folder inside the workspace root.")
     if not resolved.exists() or not resolved.is_dir():
@@ -80,7 +98,7 @@ def ensure_project_directory(workspace_root: Path, project_path: str) -> Path:
     return resolved
 
 
-def is_reparse_point_or_symlink(path: Path) -> bool:
+def is_reparse_point_or_symlink(path: Path, *, raise_on_error: bool = False) -> bool:
     try:
         if path.is_symlink():
             return True
@@ -89,8 +107,12 @@ def is_reparse_point_or_symlink(path: Path) -> bool:
             return True
         attributes = getattr(path.stat(follow_symlinks=False), "st_file_attributes", 0)
         return bool(attributes & 0x400)
-    except OSError:
+    except FileNotFoundError:
         return False
+    except OSError:
+        if raise_on_error:
+            raise
+        return True
 
 
 def has_multiple_hardlinks(path: Path) -> bool:

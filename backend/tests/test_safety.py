@@ -74,7 +74,7 @@ class ProjectPathSafetyTests(unittest.TestCase):
         alias_path = self.workspace_root / "junction-alias"
         alias_path.mkdir()
 
-        def is_reparse(path: Path) -> bool:
+        def is_reparse(path: Path, **kwargs: object) -> bool:
             return path == alias_path
 
         with patch(
@@ -153,6 +153,16 @@ class ReparseDetectorTests(unittest.TestCase):
 
         self.assertFalse(result)
         stat.assert_called_once_with(follow_symlinks=False)
+
+    def test_inspection_oserror_is_treated_as_unsafe(self) -> None:
+        with patch.object(
+            Path,
+            "is_symlink",
+            side_effect=OSError("inspection failed"),
+        ):
+            result = is_reparse_point_or_symlink(self.path)
+
+        self.assertTrue(result)
 
 
 if __name__ == "__main__":

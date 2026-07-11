@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from .agents import generate_agents_md
+from .agents_write import filesystem_error_status, safe_write_project_file
 from .changelog import CHANGELOG_ENTRIES
 from .database import (
     WORKSPACE_ROOT_SETTING,
@@ -164,15 +165,17 @@ def agents_exists(project_path: str = Query(min_length=1, max_length=1000)) -> d
 @app.post("/api/agents/write")
 def write_agents(payload: AgentPreviewRequest) -> dict[str, object]:
     project = _ensure_project(payload.project_path)
-    agents_path = _agents_path(project)
+    agents_path = project / "AGENTS.md"
     content = _agent_content(payload)
 
     try:
-        if payload.overwrite:
-            agents_path.write_text(content, encoding="utf-8")
-        else:
-            with agents_path.open("x", encoding="utf-8", newline="\n") as agents_file:
-                agents_file.write(content)
+        agents_path = safe_write_project_file(
+            _project_root(),
+            project,
+            "AGENTS.md",
+            content,
+            overwrite=payload.overwrite,
+        )
     except FileExistsError:
         return {
             "written": False,
@@ -181,7 +184,13 @@ def write_agents(payload: AgentPreviewRequest) -> dict[str, object]:
             "message": "AGENTS.md already exists. Confirm overwrite to write a new version.",
         }
     except OSError as exc:
-        raise HTTPException(status_code=500, detail="AGENTS.md could not be written.") from exc
+        status_code = filesystem_error_status(exc)
+        detail = (
+            "AGENTS.md could not be safely written."
+            if status_code == 409
+            else "AGENTS.md could not be written."
+        )
+        raise HTTPException(status_code=status_code, detail=detail) from exc
 
     return {
         "written": True,
