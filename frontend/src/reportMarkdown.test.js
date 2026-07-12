@@ -170,6 +170,17 @@ test("legacy summary sections preserve input order and omit malformed empty rows
 });
 
 test("exports complete, incomplete, and unknown scan coverage conservatively", () => {
+  const emptyReport = reportFixture({
+    manifests: [],
+    lockfiles: [],
+    lifecycleScripts: [],
+    secretFiles: [],
+    ignoredFiles: [],
+    reviewedFiles: [],
+    ignoredFileCount: 0,
+    reviewedFileCount: 0,
+    zone: "Unknown",
+  });
   const incomplete = buildScanReportMarkdown({
     ...scanResult([]),
     scanCompleteness: {
@@ -180,13 +191,20 @@ test("exports complete, incomplete, and unknown scan coverage conservatively", (
       unsafePathCount: 1,
       issueCount: 7,
     },
-  }, reportFixture(), null, { configured: false });
+  }, emptyReport, null, { configured: false });
   assert.match(incomplete, /^## Scan completeness$/m);
   assert.match(incomplete, /^Status: Incomplete$/m);
   assert.match(incomplete, /Directory traversal failures: 1/);
   assert.match(incomplete, /File inspection\/read failures: 2/);
   assert.match(incomplete, /Oversized files skipped: 3/);
   assert.match(incomplete, /Total inspection issues: 7/);
+  assert.match(incomplete, /No manifests recorded in this scan; coverage incomplete\./);
+  assert.match(incomplete, /No lockfiles recorded in this scan; coverage incomplete\./);
+  assert.match(incomplete, /No package lifecycle scripts recorded in this scan; coverage incomplete\./);
+  assert.match(incomplete, /No secret-looking files recorded in this scan; coverage incomplete\./);
+  assert.match(incomplete, /No ignored files recorded in this scan; coverage incomplete\./);
+  assert.match(incomplete, /No reviewed files recorded in this scan; coverage incomplete\./);
+  assert.match(incomplete, /No zone\/context recorded in this scan; coverage incomplete\./);
 
   const complete = buildScanReportMarkdown({
     ...scanResult([]),
@@ -198,12 +216,31 @@ test("exports complete, incomplete, and unknown scan coverage conservatively", (
       unsafePathCount: 0,
       issueCount: 0,
     },
-  }, reportFixture(), null, { configured: false });
+  }, emptyReport, null, { configured: false });
   assert.match(complete, /^Status: Complete$/m);
+  assert.match(complete, /No manifests found\./);
+  assert.match(complete, /No lockfiles found\./);
+  assert.match(complete, /No package lifecycle scripts found\./);
+  assert.match(complete, /No secret-looking files found\./);
+  assert.match(complete, /No files ignored by \.codexforgeignore\./);
+  assert.doesNotMatch(complete, /coverage (?:unknown|incomplete)/i);
 
-  const older = buildScanReportMarkdown(scanResult([]), reportFixture(), null, { configured: false });
+  const older = buildScanReportMarkdown(scanResult([]), emptyReport, {
+    riskChange: "Recorded risk unchanged; coverage comparison unavailable",
+    coverageChange: "Unavailable because at least one scan lacks coverage metadata",
+    findingDelta: "No change",
+  }, { configured: false });
   assert.match(older, /Status: Coverage unknown/);
   assert.doesNotMatch(older, /^Status: Complete$/m);
+  assert.match(older, /No manifests recorded in this scan; coverage unknown\./);
+  assert.match(older, /No lockfiles recorded in this scan; coverage unknown\./);
+  assert.match(older, /No package lifecycle scripts recorded in this scan; coverage unknown\./);
+  assert.match(older, /No secret-looking files recorded in this scan; coverage unknown\./);
+  assert.match(older, /No ignored files recorded in this scan; coverage unknown\./);
+  assert.match(older, /No reviewed files recorded in this scan; coverage unknown\./);
+  assert.match(older, /No zone\/context recorded in this scan; coverage unknown\./);
+  assert.match(older, /Risk: Recorded risk unchanged; coverage comparison unavailable/);
+  assert.match(older, /Coverage: Unavailable because at least one scan lacks coverage metadata/);
 });
 
 test("exports dependency trust summaries, changes, limitations, and detailed evidence once", () => {

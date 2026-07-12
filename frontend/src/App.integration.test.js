@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { after, afterEach, before, beforeEach, test } from "node:test";
 
 import React, { act } from "react";
@@ -298,6 +299,7 @@ test("incomplete scan with no findings remains explicitly unverified", async () 
   await click(document.querySelector('a[href="#projects"]'));
   assertProjectSummary(document.querySelector(".projects-table-row"), "Findings: None recorded", "Coverage: Incomplete");
   await openReports();
+  assert.equal(document.querySelector(".contextual-scan-button").textContent, "Run Current Scan");
   assertReportHeader("0 findings", "Incomplete coverage");
   assert.match(document.body.textContent, /Traversal failures: 1/);
   assert.match(document.body.textContent, /File inspection failures: 2/);
@@ -332,6 +334,7 @@ test("complete scan with no findings retains verified clean presentation", async
   await click(document.querySelector('a[href="#projects"]'));
   assertProjectSummary(document.querySelector(".projects-table-row"), "Findings: None recorded", "Coverage: Complete");
   await openReports();
+  assert.equal(document.querySelector(".contextual-scan-button"), null);
   assertReportHeader("0 findings", "Complete coverage", { verified: true });
   assertHistorySummary("0 findings", "Coverage: Complete");
 });
@@ -363,8 +366,96 @@ test("legacy scan with unknown coverage never presents verified clean", async ()
   await click(document.querySelector('a[href="#projects"]'));
   assertProjectSummary(document.querySelector(".projects-table-row"), "Findings: None recorded", "Coverage: Unknown");
   await openReports();
+  assert.equal(document.querySelector(".contextual-scan-button").textContent, "Run Current Scan");
   assertReportHeader("0 findings", "Coverage unknown");
   assertHistorySummary("0 findings", "Coverage: Unknown");
+});
+
+test("unknown coverage comparison labels recorded risk and unavailable coverage", async () => {
+  const legacy = scan(19, "none", "2026-07-11T12:12:00Z");
+  const complete = withCompleteness(scan(18, "none", "2026-07-11T12:11:00Z"), { complete: true });
+  await renderApp();
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [legacy, complete] });
+  await openReports();
+
+  const comparison = document.querySelector(".scan-comparison");
+  assert.match(comparison.textContent, /Recorded risk unchanged; coverage comparison unavailable/);
+  assert.match(comparison.textContent, /Unavailable because at least one scan lacks coverage metadata/);
+});
+
+test("contextual and primary scan controls share one guarded request and synchronized state", async () => {
+  const legacy = scan(20, "none", "2026-07-11T12:20:00Z");
+  await renderApp();
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [legacy] });
+  await openReports();
+
+  const historyButton = document.querySelector(".history-row .history-view-button");
+  await click(historyButton);
+  assert.match(document.querySelector(".scan-completeness-action").textContent, /new current scan and does not modify the historical scan/);
+
+  const contextual = document.querySelector(".contextual-scan-button");
+  await click(contextual);
+  await click(contextual);
+  assert.equal(fetchHarness.count("/api/scans", "POST"), 1);
+  assert.equal(runScanButton().disabled, true);
+  assert.equal(runScanButton().textContent, "Scanning...");
+  assert.equal(contextual.disabled, true);
+  assert.equal(contextual.textContent, "Scanning...");
+
+  const request = await fetchHarness.next("/api/scans", { method: "POST" });
+  const complete = withCompleteness(scan(21, "none", "2026-07-11T12:21:00Z"), { complete: true });
+  await finishScan(request, complete, [complete, legacy]);
+  assert.equal(runScanButton().disabled, false);
+  assert.equal(document.querySelector(".contextual-scan-button"), null);
+});
+
+test("scan and copy success notices expire and are never persisted", async () => {
+  await renderReadyProjectA();
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  const noticeTimers = [];
+  globalThis.setTimeout = (callback, delay, ...args) => {
+    if (delay === 4000) {
+      const token = { callback, args, cleared: false };
+      noticeTimers.push(token);
+      return token;
+    }
+    return originalSetTimeout(callback, delay, ...args);
+  };
+  globalThis.clearTimeout = (token) => {
+    if (noticeTimers.includes(token)) token.cleared = true;
+    else originalClearTimeout(token);
+  };
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText: async () => undefined },
+  });
+
+  try {
+    await click(runScanButton());
+    const request = await fetchHarness.next("/api/scans", { method: "POST" });
+    const complete = withCompleteness(scan(22, "none", "2026-07-11T12:22:00Z"), { complete: true });
+    await finishScan(request, complete, [complete]);
+    await click(buttonWithText("Copy Markdown"));
+    assert.match(document.querySelector(".notice-stack").textContent, /Scan complete/);
+    assert.match(document.querySelector(".notice-stack").textContent, /Report Markdown copied/);
+    assert.doesNotMatch(window.localStorage.getItem(SESSION_STATE_KEY) || "", /Scan complete|Report Markdown copied/);
+
+    await act(async () => {
+      noticeTimers.filter((timer) => !timer.cleared).forEach((timer) => timer.callback(...timer.args));
+      await flushMicrotasks();
+    });
+    assert.doesNotMatch(document.querySelector(".notice-stack").textContent, /Scan complete|Report Markdown copied/);
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+  }
+});
+
+test("root layout reserves stable vertical scrollbar space", () => {
+  const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+  assert.match(styles, /html\s*\{[^}]*overflow-y:\s*scroll;[^}]*scrollbar-gutter:\s*stable;/s);
+  assert.doesNotMatch(styles.match(/html\s*\{[^}]*\}/s)?.[0] || "", /overflow-x/);
 });
 
 test("complete Node and Python dependency analysis renders compact offline trust evidence", async () => {

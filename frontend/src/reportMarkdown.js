@@ -169,37 +169,37 @@ export function buildScanReportMarkdown(result, report, comparison, trustContext
     "## Manifests",
     formatMarkdownGuidance(SCAN_GUIDANCE.manifests),
     "",
-    formatMarkdownList(report?.manifests, "No manifests found."),
+    formatMarkdownList(report?.manifests, coverageAwareEmptyText(completeness, "No manifests found.", "No manifests recorded in this scan")),
     "",
     "## Lockfiles",
     formatMarkdownGuidance(SCAN_GUIDANCE.lockfiles),
     "",
-    formatMarkdownList(report?.lockfiles, "No lockfiles found."),
+    formatMarkdownList(report?.lockfiles, coverageAwareEmptyText(completeness, "No lockfiles found.", "No lockfiles recorded in this scan")),
     "",
     "## Lifecycle scripts",
     formatMarkdownGuidance(SCAN_GUIDANCE.lifecycleScripts),
     "",
-    formatLifecycleScripts(report?.lifecycleScripts),
+    formatLifecycleScripts(report?.lifecycleScripts, coverageAwareEmptyText(completeness, "No package lifecycle scripts found.", "No package lifecycle scripts recorded in this scan")),
     "",
     "## Secrets",
     formatMarkdownGuidance(SCAN_GUIDANCE.secretFiles),
     "",
-    formatMarkdownList(report?.secretFiles, "No secret-looking files found."),
+    formatMarkdownList(report?.secretFiles, coverageAwareEmptyText(completeness, "No secret-looking files found.", "No secret-looking files recorded in this scan")),
     "",
     "## Ignored files",
     formatMarkdownGuidance(SCAN_GUIDANCE.ignoredFiles),
     "",
-    formatPathMetadataList(report?.ignoredFiles, report?.ignoredFileCount, "No files ignored by .codexforgeignore."),
+    formatPathMetadataList(report?.ignoredFiles, report?.ignoredFileCount, coverageAwareEmptyText(completeness, "No files ignored by .codexforgeignore.", "No ignored files recorded in this scan")),
     "",
     "## Reviewed files",
     formatMarkdownGuidance(SCAN_GUIDANCE.reviewedFiles),
     "",
-    formatPathMetadataList(report?.reviewedFiles, report?.reviewedFileCount, "No reviewed files recorded for this scan."),
+    formatPathMetadataList(report?.reviewedFiles, report?.reviewedFileCount, coverageAwareEmptyText(completeness, "No reviewed files recorded for this scan.", "No reviewed files recorded in this scan")),
     "",
     "## Zone",
     formatMarkdownGuidance(SCAN_GUIDANCE.zone),
     "",
-    escapeMarkdownText(presentText(report?.zone) || "Unknown"),
+    formatZone(report?.zone, completeness),
     "",
     "## Trust Profile Context",
     formatMarkdownTrustContext(trustContext),
@@ -410,8 +410,8 @@ function formatMarkdownGuidance(guidance) {
   ].join("\n");
 }
 
-function formatLifecycleScripts(items) {
-  if (!Array.isArray(items) || !items.length) return "No package lifecycle scripts found.";
+function formatLifecycleScripts(items, emptyText) {
+  if (!Array.isArray(items) || !items.length) return emptyText;
   const lines = items.map((item) => {
     const path = inlineCode(item?.path);
     const script = escapeMarkdownText(item?.script);
@@ -420,7 +420,19 @@ function formatLifecycleScripts(items) {
     if (script) return `- ${script}`;
     return "";
   }).filter(Boolean);
-  return lines.length ? lines.join("\n") : "No package lifecycle scripts found.";
+  return lines.length ? lines.join("\n") : emptyText;
+}
+
+function coverageAwareEmptyText(completeness, completeText, recordedText) {
+  if (!completeness.known) return `${recordedText}; coverage unknown.`;
+  if (!completeness.complete) return `${recordedText}; coverage incomplete.`;
+  return completeText;
+}
+
+function formatZone(value, completeness) {
+  const zone = presentText(value);
+  if (zone && zone.toLowerCase() !== "unknown") return escapeMarkdownText(zone);
+  return coverageAwareEmptyText(completeness, "Unknown", "No zone/context recorded in this scan");
 }
 
 function formatPathMetadataList(items, recordedCount, emptyText) {
@@ -434,6 +446,7 @@ function formatMarkdownComparison(comparison) {
   if (!comparison) return "No previous scan to compare yet.";
   return [
     ["Risk", comparison.riskChange],
+    ["Coverage", comparison.coverageChange],
     ["Findings", comparison.findingDelta],
     ["Reviewed files", comparison.reviewedDelta],
     ["Ignored files", comparison.ignoredDelta],

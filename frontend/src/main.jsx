@@ -19,6 +19,7 @@ import {
 import "./styles.css";
 
 const API_BASE = "http://127.0.0.1:8000";
+const TRANSIENT_NOTICE_MS = 4000;
 const EMPTY_AGENT_FORM = {
   project_purpose: "",
   project_rules: "",
@@ -171,6 +172,18 @@ export function App() {
   useEffect(() => {
     setCopyStatus("");
   }, [displayedScan?.id]);
+
+  useEffect(() => {
+    if (!copyStatus) return undefined;
+    const timeout = setTimeout(() => setCopyStatus(""), TRANSIENT_NOTICE_MS);
+    return () => clearTimeout(timeout);
+  }, [copyStatus]);
+
+  useEffect(() => {
+    if (!isTransientSuccessMessage(message)) return undefined;
+    const timeout = setTimeout(() => setMessage(""), TRANSIENT_NOTICE_MS);
+    return () => clearTimeout(timeout);
+  }, [message]);
 
   useEffect(() => {
     if (!sessionStateReady || !projectRoot) return;
@@ -876,10 +889,12 @@ export function App() {
           </div>
         </header>
 
-        {message && <div className="notice">{message}</div>}
-        {projectDetailsLoading && selectedProject ? <div className="notice subtle-notice">Loading project details...</div> : null}
-        {copyStatus && <div className="notice subtle-notice">{copyStatus}</div>}
-        {projectRootMessage && <div className="notice">{projectRootMessage}</div>}
+        <div className="notice-stack" aria-live="polite">
+          {message && <div className="notice">{message}</div>}
+          {projectDetailsLoading && selectedProject ? <div className="notice subtle-notice">Loading project details...</div> : null}
+          {copyStatus && <div className="notice subtle-notice">{copyStatus}</div>}
+          {projectRootMessage && <div className="notice">{projectRootMessage}</div>}
+        </div>
         <div className="workspace-root-line" title={selectedProject?.path || projectRoot}>
           Workspace: {selectedProject?.name || "No project selected"} <span>Path: {selectedProject?.path || projectRoot || "Loading workspace root..."}</span>
         </div>
@@ -919,6 +934,8 @@ export function App() {
                 comparison={displayedComparison}
                 trustContext={displayedTrustContext}
                 viewMode={scanViewMode}
+                isScanning={isScanning}
+                onRunScan={runScan}
                 open={majorSectionsOpen.scanReport}
                 onOpenChange={(open) => setMajorSectionOpen("scanReport", open)}
               />
@@ -1397,7 +1414,7 @@ function TrustProfilePanel({ profile, message, onSave }) {
   );
 }
 
-function ScanReport({ result, report, comparison, trustContext, viewMode, open, onOpenChange }) {
+function ScanReport({ result, report, comparison, trustContext, viewMode, isScanning, onRunScan, open, onOpenChange }) {
   return (
     <details className="panel section-toggle" id="reports" open={open} onToggle={(event) => onOpenChange(event.currentTarget.open)}>
       <summary className="section-summary">
@@ -1413,7 +1430,7 @@ function ScanReport({ result, report, comparison, trustContext, viewMode, open, 
       {result ? (
         <>
           <ScanSummary report={report} risk={result.overall_risk} />
-          <ScanCompletenessSummary completeness={report.completeness} />
+          <ScanCompletenessSummary completeness={report.completeness} viewMode={viewMode} isScanning={isScanning} onRunScan={onRunScan} />
           <DependencyTrustPanel trust={report.dependencyTrust} findings={report.dependencyFindings} trustContext={trustContext} />
           <div className="scan-view-label">
             {viewMode === "history" ? `Viewing history scan from ${formatDate(result.scan_date)}` : `Viewing latest scan from ${formatDate(result.scan_date)}`}
@@ -1496,7 +1513,8 @@ function ScanHeaderStatus({ result, completeness }) {
   );
 }
 
-function ScanCompletenessSummary({ completeness }) {
+function ScanCompletenessSummary({ completeness, viewMode, isScanning, onRunScan }) {
+  const needsRescan = !completeness.known || !completeness.complete;
   return (
     <section className="scan-completeness">
       <h3>{coverageLabel(completeness)}</h3>
@@ -1510,6 +1528,14 @@ function ScanCompletenessSummary({ completeness }) {
           <span>Total issues: {completeness.issueCount}</span>
         </div>
       )}
+      {needsRescan ? (
+        <div className="scan-completeness-action">
+          {viewMode === "history" ? <p>This creates a new current scan and does not modify the historical scan being viewed.</p> : null}
+          <button type="button" className="run-scan-button contextual-scan-button" onClick={onRunScan} disabled={isScanning}>
+            {isScanning ? "Scanning..." : "Run Current Scan"}
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -1784,6 +1810,7 @@ function ScanComparison({ comparison }) {
       ) : (
         <div className="comparison-grid">
           <ComparisonItem label="Risk" value={comparison.riskChange} />
+          {comparison.coverageChange ? <ComparisonItem label="Coverage" value={comparison.coverageChange} /> : null}
           <ComparisonItem label="Findings" value={comparison.findingDelta} />
           <ComparisonItem label="Reviewed files" value={comparison.reviewedDelta} />
           <ComparisonItem label="Ignored files" value={comparison.ignoredDelta} />
@@ -2325,16 +2352,31 @@ function buildScanComparisonFor(scan, scans) {
 
   const latest = scans[scanIndex];
   const previous = scans[scanIndex + 1];
+  const latestCompleteness = normalizeScanCompleteness(latest);
+  const previousCompleteness = normalizeScanCompleteness(previous);
+  const coverageComparable = latestCompleteness.known && previousCompleteness.known;
+  const riskUnchanged = latest.overall_risk === previous.overall_risk;
+  const riskChange = riskUnchanged
+    ? "Risk unchanged"
+    : `${formatRiskLabel(previous.overall_risk)} -> ${formatRiskLabel(latest.overall_risk)}`;
   return {
-    riskChange:
-      latest.overall_risk === previous.overall_risk
-        ? "Risk unchanged"
-        : `${formatRiskLabel(previous.overall_risk)} -> ${formatRiskLabel(latest.overall_risk)}`,
+    riskChange: coverageComparable
+      ? riskChange
+      : riskUnchanged
+        ? "Recorded risk unchanged; coverage comparison unavailable"
+        : `Recorded risk: ${riskChange}; coverage comparison unavailable`,
+    coverageChange: coverageComparable
+      ? `${coverageHeaderLabel(previousCompleteness)} -> ${coverageHeaderLabel(latestCompleteness)}`
+      : "Unavailable because at least one scan lacks coverage metadata",
     findingDelta: formatCountDelta(scanFindingCount(latest) - scanFindingCount(previous), "finding", "findings"),
     reviewedDelta: formatCountDelta(scanReviewedCount(latest) - scanReviewedCount(previous), "reviewed file", "reviewed files"),
     ignoredDelta: formatCountDelta(scanIgnoredCount(latest) - scanIgnoredCount(previous), "ignored file", "ignored files"),
     typeSummary: formatFindingTypeDelta(latest.findingSummary, previous.findingSummary),
   };
+}
+
+function isTransientSuccessMessage(value) {
+  return /^(?:Scan complete\.|AGENTS\.md preview generated\.|Created |Registered |Workspace root changed\.|Project metadata saved\.|Saved UI state reset\.)/.test(value || "");
 }
 
 function formatRiskLabel(risk) {
