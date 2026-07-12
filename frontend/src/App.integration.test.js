@@ -144,7 +144,7 @@ test("loading and errors stay scoped to the selected project during aborts", asy
   assert.match(selectedProjectText(), /Project B/);
 });
 
-test("incomplete scan coverage is visible in summary, report, and history", async () => {
+test("incomplete scan with no findings remains explicitly unverified", async () => {
   const completeness = {
     complete: false,
     traversalFailureCount: 1,
@@ -154,14 +154,20 @@ test("incomplete scan coverage is visible in summary, report, and history", asyn
   };
   await renderApp([{
     ...PROJECT_A,
-    last_risk_level: "medium",
+    last_risk_level: "none",
     last_scan_time: "2026-07-11T12:00:00Z",
     last_scan_completeness: withCompleteness({}, completeness).scanCompleteness,
+    scan_state: "scanned",
   }, PROJECT_B]);
-  const incomplete = withCompleteness(scan(7, "medium", "2026-07-11T12:00:00Z"), completeness);
+  const incomplete = withCompleteness(scan(7, "none", "2026-07-11T12:00:00Z"), completeness);
   await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [incomplete] });
 
   assert.match(document.body.textContent, /Incomplete scan/);
+  assert.match(document.body.textContent, /No findings recorded; scan incomplete/);
+  assert.doesNotMatch(document.body.textContent, /No findings detected/);
+  assert.deepEqual(categoryStatuses().slice(0, 6), Array(6).fill("Not verified"));
+  assert.equal(document.querySelectorAll(".findings-overview .status-clean").length, 0);
+  assert.match(document.querySelector(".recent-activity").textContent, /Incomplete scan recorded/);
   await click(document.querySelector('a[href="#projects"]'));
   assert.match(document.querySelector(".projects-table-row").textContent, /Incomplete scan/);
   await openReports();
@@ -171,8 +177,7 @@ test("incomplete scan coverage is visible in summary, report, and history", asyn
   assert.match(document.querySelector(".history-row").textContent, /Incomplete scan/);
 });
 
-test("complete clean and older scans use distinct coverage states", async () => {
-  await renderApp();
+test("complete scan with no findings retains verified clean presentation", async () => {
   const clean = withCompleteness(scan(8, "none", "2026-07-11T12:01:00Z"), {
     complete: true,
     traversalFailureCount: 0,
@@ -180,15 +185,49 @@ test("complete clean and older scans use distinct coverage states", async () => 
     oversizedFileCount: 0,
     unsafePathCount: 0,
   });
+  await renderApp([{
+    ...PROJECT_A,
+    last_risk_level: "none",
+    last_scan_time: clean.scan_date,
+    last_scan_completeness: clean.scanCompleteness,
+    scan_state: "scanned",
+  }, PROJECT_B]);
   await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [clean] });
-  assert.match(document.body.textContent, /Complete scan with no findings detected/);
 
-  await selectProject("Project B");
-  await resolveDetails(await takeDetailRequests(PROJECT_B_PATH), {
-    scans: [{ ...scan(9, "none", "2026-07-11T12:02:00Z"), project_path: PROJECT_B_PATH }],
-  });
+  assert.match(document.body.textContent, /Complete scan with no findings detected/);
+  assert.deepEqual(categoryStatuses().slice(0, 6), Array(6).fill("Clean"));
+  assert.deepEqual(categoryStatuses().slice(6), ["Count", "Count"]);
+  assert.ok(document.querySelector(".overall-risk-panel .risk-ring-none"));
+  assert.doesNotMatch(document.body.textContent, /coverage unknown/i);
+  assert.match(document.querySelector(".recent-activity").textContent, /Scan completed/);
+});
+
+test("legacy scan with unknown coverage never presents verified clean", async () => {
+  const legacy = scan(9, "none", "2026-07-11T12:02:00Z");
+  await renderApp([{
+    ...PROJECT_A,
+    last_risk_level: "none",
+    last_scan_time: legacy.scan_date,
+    last_scan_completeness: null,
+    scan_state: "scanned",
+  }, PROJECT_B]);
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [legacy] });
+
   assert.match(document.body.textContent, /Coverage unknown/);
-  assert.doesNotMatch(document.body.textContent, /Complete scan with no findings detected/);
+  assert.match(document.body.textContent, /No findings recorded; coverage unknown/);
+  assert.match(document.body.textContent, /Run a new scan to verify current coverage/);
+  assert.doesNotMatch(document.body.textContent, /No findings detected/);
+  assert.doesNotMatch(document.body.textContent, /Complete scan/);
+  assert.deepEqual(categoryStatuses().slice(0, 6), Array(6).fill("Unknown"));
+  assert.deepEqual(categoryStatuses().slice(6), ["Count", "Count"]);
+  assert.equal(document.querySelectorAll(".findings-overview .status-clean").length, 0);
+  assert.ok(document.querySelector(".overall-risk-panel.coverage-unknown .risk-ring-unknown"));
+  assert.match(document.querySelector(".recent-activity").textContent, /Legacy scan recorded/);
+  assert.doesNotMatch(document.querySelector(".recent-activity").textContent, /Scan completed/);
+  assert.match(document.querySelector(".project-item").textContent, /No findings recorded; coverage unknown/);
+
+  await click(document.querySelector('a[href="#projects"]'));
+  assert.match(document.querySelector(".projects-table-row").textContent, /No findings recorded; coverage unknown/);
 });
 
 test("scan button gates duplicate submissions and shows progress", async () => {
@@ -521,6 +560,11 @@ function visibleRisk() {
     .find((item) => item.textContent === "Risk Level");
   assert.ok(label, "Expected Risk Level summary card");
   return label.parentElement.querySelector(".summary-value").textContent;
+}
+
+function categoryStatuses() {
+  return [...document.querySelectorAll(".findings-overview .category-row")]
+    .map((row) => row.lastElementChild.textContent);
 }
 
 function createFetchHarness() {

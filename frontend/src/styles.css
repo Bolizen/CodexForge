@@ -1462,6 +1462,13 @@ textarea::placeholder {
     conic-gradient(#ff4f22 0 100%);
 }
 
+.risk-ring-unknown {
+  background:
+    radial-gradient(circle at center, #0b1012 0 46%, transparent 47%),
+    conic-gradient(#7f8a8d 0 100%);
+  box-shadow: 0 0 28px rgba(127, 138, 141, 0.12);
+}
+
 .risk-ring strong {
   font-size: 1.75rem;
 }
@@ -1521,6 +1528,11 @@ textarea::placeholder {
   margin-right: 10px;
 }
 
+.coverage-unknown .risk-reasons li::before {
+  color: #a8b0b2;
+  content: "?";
+}
+
 .category-table {
   display: grid;
   margin-top: 10px;
@@ -1549,6 +1561,11 @@ textarea::placeholder {
 
 .status-review {
   color: #ffb13b;
+}
+
+.status-count,
+.status-unknown {
+  color: #a8b0b2;
 }
 
 .overview-good {

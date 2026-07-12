@@ -721,6 +721,7 @@ export function App() {
                 <span className="project-name">{project.name}</span>
                 <span className={`risk risk-${project.last_risk_level}`}>{projectRiskLabel(project)}</span>
                 <span className="project-meta">{projectCoverageLabel(project)}</span>
+                {projectRiskContext(project) ? <span className="project-meta">{projectRiskContext(project)}</span> : null}
                 <span className="project-path">{project.path}</span>
                 {project.available === false ? <span className="project-meta">Unavailable: {project.availability}</span> : null}
                 <span className="project-meta">{project.notes_count} notes</span>
@@ -858,11 +859,12 @@ function SummaryCards({ projects, report, result, comparison }) {
   const hasScan = Boolean(result);
   const completeness = report.completeness;
   const highestSeverity = highestFindingSeverity(result?.findings || []) || "none";
+  const emptyFindingDetail = findingAbsenceDetail(completeness);
   const cards = [
-    { label: "Risk Level", value: hasScan ? formatRiskLabel(result.overall_risk) : "NOT SCANNED", detail: hasScan ? "Current scan" : "Run the first scan", icon: "◇", risk: result?.overall_risk || "none" },
+    { label: "Risk Level", value: hasScan ? formatRiskLabel(result.overall_risk) : "NOT SCANNED", detail: hasScan ? (report.totalFindings ? "Current scan" : emptyFindingDetail) : "Run the first scan", icon: "◇", risk: result?.overall_risk || "none" },
     { label: "Projects", value: projects.length, detail: "In this workspace", icon: "▣" },
-    { label: "Findings", value: hasScan ? report.totalFindings : "N/A", detail: hasScan ? (report.totalFindings ? "Review prompts found" : "No findings detected") : "Project has not been scanned", icon: "⌕" },
-    { label: "Highest Severity", value: hasScan ? formatRiskLabel(highestSeverity) : "N/A", detail: hasScan ? (highestSeverity === "none" ? "No findings detected" : "Highest finding level") : "Project has not been scanned", icon: "△", risk: hasScan ? highestSeverity : "none" },
+    { label: "Findings", value: hasScan ? report.totalFindings : "N/A", detail: hasScan ? (report.totalFindings ? "Review prompts found" : emptyFindingDetail) : "Project has not been scanned", icon: "⌕" },
+    { label: "Highest Severity", value: hasScan ? formatRiskLabel(highestSeverity) : "N/A", detail: hasScan ? (highestSeverity === "none" ? emptyFindingDetail : "Highest finding level") : "Project has not been scanned", icon: "△", risk: hasScan ? highestSeverity : "none" },
     { label: "Last Scan", value: formatDate(result?.scan_date), detail: result ? coverageLabel(completeness) : "Never scanned", icon: "◷" },
     { label: "Changed Since Last Scan", value: hasScan ? (comparison?.riskChange || "No previous scan") : "NOT SCANNED", detail: hasScan ? (comparison?.findingDelta || "Baseline not established") : "Run the first scan", icon: "▤" },
     { label: "Scan Coverage", value: hasScan ? coverageLabel(completeness) : "NOT SCANNED", detail: hasScan ? coverageDetail(completeness) : "Run the first scan", icon: "?", risk: hasScan && !completeness.complete ? "medium" : "none" },
@@ -952,6 +954,7 @@ function ProjectsSection({ projects, selectedPath, onSelectProject, onNewProject
             <span className="project-risk-cell">
               <span className={`risk risk-${project.last_risk_level}`}>{projectRiskLabel(project)}</span>
               <small>{projectCoverageLabel(project)}</small>
+              {projectRiskContext(project) ? <small>{projectRiskContext(project)}</small> : null}
             </span>
             <span>{project.notes_count}</span>
             <span>{formatDate(project.last_scan_time)}</span>
@@ -1079,6 +1082,7 @@ function OverallRiskPanel({ report, result, trustProfile }) {
   }
 
   const risk = result?.overall_risk || "none";
+  const coverageUnknown = !report.completeness.known;
   const reasons = buildRiskReasons(report, risk);
   const metrics = [
     ["Reviewed files", report.reviewedFileCount],
@@ -1087,7 +1091,7 @@ function OverallRiskPanel({ report, result, trustProfile }) {
     ["Lockfiles", report.lockfiles.length],
   ];
   return (
-    <section className="panel overview-panel overall-risk-panel">
+    <section className={`panel overview-panel overall-risk-panel${coverageUnknown ? " coverage-unknown" : ""}`}>
       <div className="panel-heading">
         <div>
           <h2>Overall Risk</h2>
@@ -1095,13 +1099,13 @@ function OverallRiskPanel({ report, result, trustProfile }) {
         </div>
       </div>
       <div className="risk-hero">
-        <div className={`risk-ring risk-ring-${risk}`}>
+        <div className={`risk-ring risk-ring-${coverageUnknown ? "unknown" : risk}`}>
           <strong>{formatRiskLabel(risk)}</strong>
           <span>{report.totalFindings}</span>
           <small>Findings</small>
         </div>
         <div className="risk-reasons">
-          <p>{risk === "none" ? "No scanner findings contributed to risk." : "Review the current scan before running project code."}</p>
+          <p>{riskSummaryText(report, risk)}</p>
           <div className="risk-metrics">
             {metrics.map(([label, value]) => (
               <div key={label}>
@@ -1152,14 +1156,18 @@ function FindingsOverview({ report, result }) {
           <span>Findings</span>
           <span>Status</span>
         </div>
-        {rows.map((row) => (
-          <div className="category-row" key={row.label}>
-            <span>{row.label}</span>
-            <strong>{row.count}</strong>
-            <span className={row.count ? "status-review" : "status-clean"}>{row.count ? "Review" : "Clean"}</span>
-          </div>
-        ))}
+        {rows.map((row) => {
+          const status = categoryStatus(row, report.completeness);
+          return (
+            <div className="category-row" key={row.label}>
+              <span>{row.label}</span>
+              <strong>{row.count}</strong>
+              <span className={status.className}>{status.label}</span>
+            </div>
+          );
+        })}
       </div>
+      {!report.completeness.known ? <p className="notice">{unknownCoverageMessage(report)} Run a new scan to verify current coverage.</p> : null}
       {report.totalFindings === 0 && report.completeness.known && report.completeness.complete ? <p className="good overview-good">Complete scan with no findings detected. Review generated code before running it.</p> : null}
     </section>
   );
@@ -1184,7 +1192,7 @@ function RecentActivity({ changelog, scans }) {
         {scans.slice(0, 3).map((scan) => (
           <div className="activity-row" key={`scan-${scan.id}`}>
             <span>{formatRiskLabel(scan.overall_risk)}</span>
-            <strong>Scan completed {formatDate(scan.scan_date)}</strong>
+            <strong>{scanActivityLabel(scan)} {formatDate(scan.scan_date)}</strong>
           </div>
         ))}
       </div>
@@ -1304,11 +1312,11 @@ function ScanReport({ result, report, comparison, trustContext, viewMode, open, 
       {result && report.totalFindings === 0 && report.completeness.known && report.completeness.complete ? <p className="good">Complete scan with no scanner findings. Still review generated code before running it.</p> : null}
       {result ? (
         <div className="scan-section-grid">
-          <PathSection title="Manifests" items={report.manifests} emptyText="No manifests found." reviewKind="manifest" guidance={SCAN_GUIDANCE.manifests} />
-          <FindingPathSection title="Lockfiles" items={report.lockfiles} findings={report.lockfileFindings} emptyText="No lockfiles found." guidance={SCAN_GUIDANCE.lockfiles} />
+          <PathSection title="Manifests" items={report.manifests} emptyText="No manifests recorded for this scan." reviewKind="manifest" guidance={SCAN_GUIDANCE.manifests} />
+          <FindingPathSection title="Lockfiles" items={report.lockfiles} findings={report.lockfileFindings} emptyText="No lockfiles recorded for this scan." guidance={SCAN_GUIDANCE.lockfiles} />
           <LifecycleSection items={report.lifecycleScripts} findings={report.lifecycleFindings} />
-          <FindingSection title="Secret Findings" findings={report.secretFindings} emptyText="No secret-looking files found." guidance={SCAN_GUIDANCE.secretFiles} />
-          <FindingSection title="Executable Files" findings={report.executableFindings} emptyText="No executable files found." />
+          <FindingSection title="Secret Findings" findings={report.secretFindings} emptyText="No secret-looking paths recorded for this scan." guidance={SCAN_GUIDANCE.secretFiles} />
+          <FindingSection title="Executable Files" findings={report.executableFindings} emptyText="No executable files recorded for this scan." />
           <MetadataSection zone={report.zone} findings={report.metadataFindings} />
         </div>
       ) : null}
@@ -1360,7 +1368,7 @@ function ScanCompletenessSummary({ completeness }) {
   return (
     <section className="scan-completeness">
       <h3>{coverageLabel(completeness)}</h3>
-      {!completeness.known ? <p>Completeness metadata is unavailable for this older scan. Do not assume full coverage.</p> : (
+      {!completeness.known ? <p>Completeness metadata is unavailable for this older scan. Do not assume full coverage. Run a new scan to verify current coverage.</p> : (
         <div className="scan-completeness-counts">
           <span>Traversal failures: {completeness.traversalFailureCount}</span>
           <span>File inspection failures: {completeness.fileInspectionFailureCount}</span>
@@ -1423,7 +1431,7 @@ function FindingPathSection({ title, items, findings, emptyText, guidance }) {
 
 function LifecycleSection({ items, findings }) {
   return (
-    <ScanSection title="Lifecycle Scripts" count={items.length} findings={findings} emptyText="No package lifecycle scripts found." guidance={SCAN_GUIDANCE.lifecycleScripts}>
+    <ScanSection title="Lifecycle Scripts" count={items.length} findings={findings} emptyText="No package lifecycle scripts recorded for this scan." guidance={SCAN_GUIDANCE.lifecycleScripts}>
       {items.length > 0 ? (
         <ul className="path-list">
           {items.map((script) => (
@@ -1841,15 +1849,23 @@ function profileList(profile, field) {
 
 function scanCategoryRows(report) {
   return [
-    { label: "Manifests", count: report.manifests.length },
-    { label: "Lockfiles", count: report.lockfiles.length },
-    { label: "Lifecycle Scripts", count: report.lifecycleScripts.length },
-    { label: "Secret Findings", count: report.secretFindings.length },
-    { label: "Executable Files", count: report.executableFindings.length },
-    { label: "Zone / Metadata Findings", count: report.metadataFindings.length },
-    { label: "Reviewed Files", count: report.reviewedFileCount },
-    { label: "Ignored Files", count: report.ignoredFileCount },
+    { label: "Manifests", count: report.manifests.length, findingCategory: true },
+    { label: "Lockfiles", count: report.lockfiles.length, findingCategory: true },
+    { label: "Lifecycle Scripts", count: report.lifecycleScripts.length, findingCategory: true },
+    { label: "Secret Findings", count: report.secretFindings.length, findingCategory: true },
+    { label: "Executable Files", count: report.executableFindings.length, findingCategory: true },
+    { label: "Zone / Metadata Findings", count: report.metadataFindings.length, findingCategory: true },
+    { label: "Reviewed Files", count: report.reviewedFileCount, findingCategory: false },
+    { label: "Ignored Files", count: report.ignoredFileCount, findingCategory: false },
   ];
+}
+
+function categoryStatus(row, completeness) {
+  if (!row.findingCategory) return { label: "Count", className: "status-count" };
+  if (row.count > 0) return { label: "Review", className: "status-review" };
+  if (!completeness.known) return { label: "Unknown", className: "status-unknown" };
+  if (!completeness.complete) return { label: "Not verified", className: "status-review" };
+  return { label: "Clean", className: "status-clean" };
 }
 
 function buildTrustProfileContext(report, profile = EMPTY_TRUST_PROFILE) {
@@ -1959,6 +1975,16 @@ function highestFindingSeverity(findings) {
 }
 
 function buildRiskReasons(report, risk) {
+  if (!report.completeness.known) {
+    return [unknownCoverageMessage(report), "Run a new scan to verify current coverage."];
+  }
+
+  if (!report.completeness.complete) {
+    return [report.totalFindings === 0
+      ? "No findings were recorded, but this scan has inspection gaps."
+      : `${report.totalFindings} ${report.totalFindings === 1 ? "finding was" : "findings were"} recorded, and inspection gaps remain.`];
+  }
+
   if (risk === "high" || risk === "medium") {
     const contributors = formatTopFindingTypes(report.findingTypeCounts);
     if (contributors) return [`Main contributors: ${contributors}.`];
@@ -1978,6 +2004,26 @@ function buildRiskReasons(report, risk) {
 
   if (report.ignoredFiles.length > 0) return ["No scanner findings contributed to risk. Ignored files are neutral by default."];
   return ["No scanner findings contributed to risk."];
+}
+
+function unknownCoverageMessage(report) {
+  return report.totalFindings === 0
+    ? "No findings recorded; coverage unknown."
+    : `${report.totalFindings} ${report.totalFindings === 1 ? "finding was" : "findings were"} recorded; coverage unknown.`;
+}
+
+function findingAbsenceDetail(completeness) {
+  if (!completeness.known) return "No findings recorded; coverage unknown";
+  if (!completeness.complete) return "No findings recorded; scan incomplete";
+  return "No findings detected";
+}
+
+function riskSummaryText(report, risk) {
+  if (!report.completeness.known) return `${unknownCoverageMessage(report)} Run a new scan to verify current coverage.`;
+  if (!report.completeness.complete && report.totalFindings === 0) return "No findings recorded; scan incomplete.";
+  return risk === "none"
+    ? "No scanner findings contributed to risk."
+    : "Review the current scan before running project code.";
 }
 
 function summarizeFindingTypes(findings) {
@@ -2018,6 +2064,20 @@ function projectRiskLabel(project) {
   return project?.scan_state === "not_scanned" || !project?.last_scan_time
     ? "Not scanned"
     : project.last_risk_level;
+}
+
+function projectRiskContext(project) {
+  if (!project?.last_scan_time || project.last_risk_level !== "none") return "";
+  const completeness = normalizeScanCompleteness({ scanCompleteness: project.last_scan_completeness });
+  return completeness.known
+    ? (completeness.complete ? "" : "No findings recorded; scan incomplete")
+    : "No findings recorded; coverage unknown";
+}
+
+function scanActivityLabel(scan) {
+  const completeness = normalizeScanCompleteness(scan);
+  if (!completeness.known) return "Legacy scan recorded";
+  return completeness.complete ? "Scan completed" : "Incomplete scan recorded";
 }
 
 function buildScanComparisonFor(scan, scans) {
