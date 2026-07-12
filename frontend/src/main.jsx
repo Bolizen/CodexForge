@@ -97,6 +97,8 @@ export function App() {
   const [metadataSaving, setMetadataSaving] = useState(false);
   const [unregisteringPath, setUnregisteringPath] = useState("");
   const [sessionStateReady, setSessionStateReady] = useState(false);
+  const [toastTop, setToastTop] = useState(112);
+  const topbarRef = useRef(null);
   const selectedPathRef = useRef("");
   const projectGenerationRef = useRef(0);
   const projectsRequestRef = useRef({ id: 0, controller: null });
@@ -184,6 +186,25 @@ export function App() {
     const timeout = setTimeout(() => setMessage(""), TRANSIENT_NOTICE_MS);
     return () => clearTimeout(timeout);
   }, [message]);
+
+  useEffect(() => {
+    const topbar = topbarRef.current;
+    if (!topbar) return undefined;
+    const updateToastTop = () => {
+      const viewportInset = window.innerWidth <= 620 ? 14 : 28;
+      setToastTop(Math.max(viewportInset, Math.ceil(topbar.getBoundingClientRect().bottom) + 12));
+    };
+    updateToastTop();
+    window.addEventListener("resize", updateToastTop);
+    window.addEventListener("scroll", updateToastTop, { passive: true });
+    const observer = window.ResizeObserver ? new window.ResizeObserver(updateToastTop) : null;
+    observer?.observe(topbar);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updateToastTop);
+      window.removeEventListener("scroll", updateToastTop);
+    };
+  }, []);
 
   useEffect(() => {
     if (!sessionStateReady || !projectRoot) return;
@@ -871,7 +892,7 @@ export function App() {
       </aside>
 
       <section className="workspace">
-        <header className="topbar" id="workspace-overview">
+        <header className="topbar" id="workspace-overview" ref={topbarRef}>
           <div>
             <h1>{selectedSectionInfo.label}</h1>
             <p>Local project dashboard for reviewing coding work before you run anything.</p>
@@ -889,7 +910,7 @@ export function App() {
           </div>
         </header>
 
-        <div className="notice-stack" aria-live="polite">
+        <div className="notice-stack" aria-live="polite" aria-atomic="false" style={{ "--toast-top": `${toastTop}px` }}>
           {message && <div className="notice">{message}</div>}
           {projectDetailsLoading && selectedProject ? <div className="notice subtle-notice">Loading project details...</div> : null}
           {copyStatus && <div className="notice subtle-notice">{copyStatus}</div>}

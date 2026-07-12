@@ -437,15 +437,27 @@ test("scan and copy success notices expire and are never persisted", async () =>
     const complete = withCompleteness(scan(22, "none", "2026-07-11T12:22:00Z"), { complete: true });
     await finishScan(request, complete, [complete]);
     await click(buttonWithText("Copy Markdown"));
-    assert.match(document.querySelector(".notice-stack").textContent, /Scan complete/);
-    assert.match(document.querySelector(".notice-stack").textContent, /Report Markdown copied/);
+    const toastStack = document.querySelector(".notice-stack");
+    assert.equal(toastStack.parentElement.classList.contains("workspace"), true);
+    assert.equal(toastStack.closest(".topbar"), null);
+    assert.equal(toastStack.querySelectorAll(".notice").length, 2);
+    assert.match(toastStack.textContent, /Scan complete/);
+    assert.match(toastStack.textContent, /Report Markdown copied/);
     assert.doesNotMatch(window.localStorage.getItem(SESSION_STATE_KEY) || "", /Scan complete|Report Markdown copied/);
 
+    const activeTimers = noticeTimers.filter((timer) => !timer.cleared);
+    assert.equal(activeTimers.length, 2);
     await act(async () => {
-      noticeTimers.filter((timer) => !timer.cleared).forEach((timer) => timer.callback(...timer.args));
+      activeTimers[0].callback(...activeTimers[0].args);
       await flushMicrotasks();
     });
-    assert.doesNotMatch(document.querySelector(".notice-stack").textContent, /Scan complete|Report Markdown copied/);
+    assert.equal(toastStack.querySelectorAll(".notice").length, 1);
+    assert.match(toastStack.textContent, /Scan complete|Report Markdown copied/);
+    await act(async () => {
+      activeTimers[1].callback(...activeTimers[1].args);
+      await flushMicrotasks();
+    });
+    assert.equal(toastStack.querySelectorAll(".notice").length, 0);
   } finally {
     globalThis.setTimeout = originalSetTimeout;
     globalThis.clearTimeout = originalClearTimeout;
@@ -456,6 +468,11 @@ test("root layout reserves stable vertical scrollbar space", () => {
   const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
   assert.match(styles, /html\s*\{[^}]*overflow-y:\s*scroll;[^}]*scrollbar-gutter:\s*stable;/s);
   assert.doesNotMatch(styles.match(/html\s*\{[^}]*\}/s)?.[0] || "", /overflow-x/);
+  const toastRule = styles.match(/\.notice-stack\s*\{[^}]*\}/s)?.[0] || "";
+  assert.match(toastRule, /position:\s*fixed/);
+  assert.match(toastRule, /top:\s*var\(--toast-top, 112px\)/);
+  assert.match(toastRule, /width:\s*min\(28rem, calc\(100vw - 376px\)\)/);
+  assert.match(styles, /@media \(max-width: 620px\)[\s\S]*?\.notice-stack\s*\{[^}]*left:\s*14px;[^}]*right:\s*14px;[^}]*width:\s*auto;/);
 });
 
 test("complete Node and Python dependency analysis renders compact offline trust evidence", async () => {
