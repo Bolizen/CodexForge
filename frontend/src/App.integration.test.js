@@ -158,18 +158,34 @@ test("a missing stored historical scan falls back to latest view", async () => {
 
 test("reset clears only saved UI state and returns to defaults without reload", async () => {
   window.localStorage.setItem("unrelated", "keep");
-  storeSession({ selectedProjectPath: PROJECT_B_PATH, activeSection: "settings", panels: { notes: false } });
+  storeSession({
+    selectedProjectPath: PROJECT_A_PATH,
+    activeSection: "settings",
+    selectedScanId: 44,
+    panels: { scanReport: false, history: false, notes: false },
+  });
   await renderApp();
-  await resolveDetails(await takeDetailRequests(PROJECT_B_PATH));
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), {
+    scans: [scan(44, "low", "2026-07-11T09:44:00Z")],
+  });
 
   await click(buttonWithText("Reset saved UI state"));
-  const detailsA = await takeDetailRequests(PROJECT_A_PATH);
-  await resolveDetails(detailsA);
+  assert.equal(document.querySelector(".topbar h1").textContent, "Workspace Overview");
   assert.equal(window.localStorage.getItem(SESSION_STATE_KEY), null);
   assert.equal(window.localStorage.getItem("unrelated"), "keep");
+  const detailsA = await takeDetailRequests(PROJECT_A_PATH);
+  await resolveDetails(detailsA, { scans: [scan(44, "low", "2026-07-11T09:44:00Z")] });
   assert.match(selectedProjectText(), /Project A/);
-  assert.equal(document.querySelector(".topbar h1").textContent, "Workspace Overview");
   assert.match(messageText(), /Backend data and workspace configuration were not changed/);
+
+  await openReports();
+  assert.equal(document.querySelector("#reports").open, true);
+  const historyPanel = [...document.querySelectorAll("details.section-toggle")]
+    .find((panel) => panel.querySelector("h2")?.textContent === "Scan History");
+  assert.equal(historyPanel.open, true);
+  assert.equal(document.querySelectorAll(".history-row.selected-history-row").length, 0);
+  assert.doesNotMatch(messageText(), /Saved UI state reset/);
+  assert.equal(fetchHarness.count("/api/scans/history"), 2);
 });
 
 test("transient drafts and mutation state are never restored", async () => {
@@ -278,13 +294,15 @@ test("incomplete scan with no findings remains explicitly unverified", async () 
   assert.deepEqual(categoryStatuses().slice(0, 6), Array(6).fill("Not verified"));
   assert.equal(document.querySelectorAll(".findings-overview .status-clean").length, 0);
   assert.match(document.querySelector(".recent-activity").textContent, /Incomplete scan recorded/);
+  assertProjectSummary(document.querySelector(".project-item"), "Findings: None recorded", "Coverage: Incomplete");
   await click(document.querySelector('a[href="#projects"]'));
-  assert.match(document.querySelector(".projects-table-row").textContent, /Incomplete scan/);
+  assertProjectSummary(document.querySelector(".projects-table-row"), "Findings: None recorded", "Coverage: Incomplete");
   await openReports();
+  assertReportHeader("0 findings", "Incomplete coverage");
   assert.match(document.body.textContent, /Traversal failures: 1/);
   assert.match(document.body.textContent, /File inspection failures: 2/);
   assert.match(document.body.textContent, /Oversized files: 1/);
-  assert.match(document.querySelector(".history-row").textContent, /Incomplete scan/);
+  assertHistorySummary("0 findings", "Coverage: Incomplete");
 });
 
 test("complete scan with no findings retains verified clean presentation", async () => {
@@ -310,6 +328,12 @@ test("complete scan with no findings retains verified clean presentation", async
   assert.ok(document.querySelector(".overall-risk-panel .risk-ring-none"));
   assert.doesNotMatch(document.body.textContent, /coverage unknown/i);
   assert.match(document.querySelector(".recent-activity").textContent, /Scan completed/);
+  assertProjectSummary(document.querySelector(".project-item"), "Findings: None recorded", "Coverage: Complete");
+  await click(document.querySelector('a[href="#projects"]'));
+  assertProjectSummary(document.querySelector(".projects-table-row"), "Findings: None recorded", "Coverage: Complete");
+  await openReports();
+  assertReportHeader("0 findings", "Complete coverage", { verified: true });
+  assertHistorySummary("0 findings", "Coverage: Complete");
 });
 
 test("legacy scan with unknown coverage never presents verified clean", async () => {
@@ -334,10 +358,13 @@ test("legacy scan with unknown coverage never presents verified clean", async ()
   assert.ok(document.querySelector(".overall-risk-panel.coverage-unknown .risk-ring-unknown"));
   assert.match(document.querySelector(".recent-activity").textContent, /Legacy scan recorded/);
   assert.doesNotMatch(document.querySelector(".recent-activity").textContent, /Scan completed/);
-  assert.match(document.querySelector(".project-item").textContent, /No findings recorded; coverage unknown/);
+  assertProjectSummary(document.querySelector(".project-item"), "Findings: None recorded", "Coverage: Unknown");
 
   await click(document.querySelector('a[href="#projects"]'));
-  assert.match(document.querySelector(".projects-table-row").textContent, /No findings recorded; coverage unknown/);
+  assertProjectSummary(document.querySelector(".projects-table-row"), "Findings: None recorded", "Coverage: Unknown");
+  await openReports();
+  assertReportHeader("0 findings", "Coverage unknown");
+  assertHistorySummary("0 findings", "Coverage: Unknown");
 });
 
 test("scan button gates duplicate submissions and shows progress", async () => {
@@ -456,8 +483,15 @@ test("project metadata and unregister lifecycle update the real UI flow", async 
   assert.match(document.body.textContent, /Python/);
   assert.match(document.body.textContent, /Unavailable: missing/);
   assert.match(document.body.textContent, /Not scanned/);
+  const projectsSection = document.querySelector(".projects-section");
+  assert.ok(projectsSection.querySelector(":scope > .panel-heading .new-project-button"));
+  assert.ok(projectsSection.querySelector(".projects-table-scroll > .projects-table"));
+  assert.equal(projectsSection.querySelector(".projects-table-header span:nth-child(2)").textContent, "Scan Status");
+  assert.equal(projectsSection.querySelector(".project-row-actions").querySelectorAll("button").length, 2);
 
   const form = document.querySelector(".projects-section form");
+  assert.ok(form.classList.contains("project-action-form"));
+  assert.equal(form.querySelectorAll("input, textarea, button").length, 3);
   await input(form.querySelector("input"), "TypeScript");
   await input(form.querySelector("textarea"), "New description");
   await click(buttonWithText("Save Metadata"));
@@ -680,6 +714,30 @@ function visibleRisk() {
 function categoryStatuses() {
   return [...document.querySelectorAll(".findings-overview .category-row")]
     .map((row) => row.lastElementChild.textContent);
+}
+
+function assertProjectSummary(element, findings, coverage) {
+  assert.ok(element, "Expected project summary");
+  assert.match(element.textContent, new RegExp(findings));
+  assert.match(element.textContent, new RegExp(coverage));
+  assert.doesNotMatch(element.textContent, /unknown\s*[—-]\s*coverage unknown/i);
+}
+
+function assertReportHeader(findings, coverage, options = {}) {
+  const header = document.querySelector("#reports > .section-summary .scan-header-status");
+  assert.ok(header, "Expected Scan Report header status");
+  assert.match(header.textContent, new RegExp(findings));
+  assert.match(header.textContent, new RegExp(coverage));
+  assert.doesNotMatch(header.textContent, /\bnone\b/i);
+  assert.equal(Boolean(header.querySelector(".scan-header-finding-count.verified")), Boolean(options.verified));
+}
+
+function assertHistorySummary(findings, coverage) {
+  const row = document.querySelector(".history-row");
+  assert.ok(row, "Expected scan history row");
+  assert.match(row.querySelector(".risk").textContent, new RegExp(findings));
+  assert.match(row.textContent, new RegExp(coverage));
+  assert.doesNotMatch(row.querySelector(".risk").textContent, /\bnone\b/i);
 }
 
 function storeSession(overrides = {}) {

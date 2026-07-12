@@ -206,14 +206,16 @@ export function App() {
     setMetadataSaving(false);
   }
 
-  function selectProject(path, { restoring = false } = {}) {
+  function selectProject(path, { restoring = false, force = false } = {}) {
     const nextPath = path || "";
+    const sameProject = selectedPathRef.current === nextPath;
     if (!restoring) pendingScanRestoreRef.current = null;
-    if (selectedPathRef.current === nextPath) return;
+    if (!force && sameProject) return;
     selectedPathRef.current = nextPath;
     projectGenerationRef.current += 1;
     resetProjectState(nextPath);
     setSelectedPath(nextPath);
+    if (force && sameProject && nextPath) setProjectDetailsRevision((revision) => revision + 1);
   }
 
   function projectRequestIsCurrent(path, generation) {
@@ -751,6 +753,8 @@ export function App() {
 
   function resetSavedUiState() {
     pendingScanRestoreRef.current = null;
+    restorationPendingRef.current = false;
+    initialSessionStateRef.current = null;
     clearSessionState();
     lastSessionWriteRef.current = "";
     skipNextSessionWriteRef.current = true;
@@ -758,7 +762,7 @@ export function App() {
     setSelectedSection("workspace");
     setMajorSectionsOpen({ ...OPEN_MAJOR_SECTIONS });
     const defaultProject = projects.find((project) => project.available !== false)?.path || "";
-    selectProject(defaultProject, { restoring: true });
+    selectProject(defaultProject, { restoring: true, force: true });
     setMessage("Saved UI state reset. Backend data and workspace configuration were not changed.");
   }
 
@@ -775,6 +779,7 @@ export function App() {
     }[link.hash];
     if (!section) return;
     event.preventDefault();
+    setMessage((current) => current.startsWith("Saved UI state reset.") ? "" : current);
     setSelectedSection(section);
   }
 
@@ -825,9 +830,8 @@ export function App() {
                 disabled={project.available === false}
               >
                 <span className="project-name">{project.name}</span>
-                <span className={`risk risk-${project.last_risk_level}`}>{projectRiskLabel(project)}</span>
+                <span className={`risk risk-${project.last_risk_level}`}>{projectFindingRiskLabel(project)}</span>
                 <span className="project-meta">{projectCoverageLabel(project)}</span>
-                {projectRiskContext(project) ? <span className="project-meta">{projectRiskContext(project)}</span> : null}
                 <span className="project-path">{project.path}</span>
                 {project.available === false ? <span className="project-meta">Unavailable: {project.availability}</span> : null}
                 <span className="project-meta">{project.notes_count} notes</span>
@@ -1040,40 +1044,41 @@ function ProjectsSection({ projects, selectedPath, onSelectProject, onNewProject
         <button type="button" className="new-project-button inline-action" onClick={onNewProject}>Add Project</button>
       </div>
       {loading ? <p className="muted">Loading projects...</p> : null}
-      <div className="projects-table">
-        <div className="projects-table-header">
-          <span>Name</span>
-          <span>Risk</span>
-          <span>Notes</span>
-          <span>Last Scan</span>
-          <span>Action</span>
-        </div>
-        {projects.map((project) => (
-          <div className="projects-table-row" key={project.path}>
-            <div>
-              <strong>{project.name}</strong>
-              {project.project_type ? <small>{project.project_type}</small> : null}
-              {project.description ? <small>{project.description}</small> : null}
-              <span>{project.path}</span>
-              {project.available === false ? <small>Unavailable: {project.availability}</small> : null}
-            </div>
-            <span className="project-risk-cell">
-              <span className={`risk risk-${project.last_risk_level}`}>{projectRiskLabel(project)}</span>
-              <small>{projectCoverageLabel(project)}</small>
-              {projectRiskContext(project) ? <small>{projectRiskContext(project)}</small> : null}
-            </span>
-            <span>{project.notes_count}</span>
-            <span>{formatDate(project.last_scan_time)}</span>
-            <div className="project-row-actions">
-              <button type="button" className="history-view-button" onClick={() => onSelectProject(project.path)} disabled={project.available === false}>
-                {selectedPath === project.path ? "Selected" : "Select"}
-              </button>
-              <button type="button" className="history-view-button" onClick={() => onUnregister(project)} disabled={Boolean(unregisteringPath)}>
-                {unregisteringPath === project.path ? "Unregistering..." : "Unregister"}
-              </button>
-            </div>
+      <div className="projects-table-scroll">
+        <div className="projects-table">
+          <div className="projects-table-header">
+            <span>Name</span>
+            <span>Scan Status</span>
+            <span>Notes</span>
+            <span>Last Scan</span>
+            <span>Action</span>
           </div>
-        ))}
+          {projects.map((project) => (
+            <div className="projects-table-row" key={project.path}>
+              <div className="project-identity">
+                <strong>{project.name}</strong>
+                {project.project_type ? <small>{project.project_type}</small> : null}
+                {project.description ? <small>{project.description}</small> : null}
+                <span>{project.path}</span>
+                {project.available === false ? <small>Unavailable: {project.availability}</small> : null}
+              </div>
+              <span className="project-risk-cell">
+                <span className={`risk risk-${project.last_risk_level}`}>{projectFindingRiskLabel(project)}</span>
+                <small>{projectCoverageLabel(project)}</small>
+              </span>
+              <span className="project-notes"><small>Notes</small>{project.notes_count}</span>
+              <span className="project-last-scan"><small>Last scan</small>{formatDate(project.last_scan_time)}</span>
+              <div className="project-row-actions">
+                <button type="button" className="history-view-button" onClick={() => onSelectProject(project.path)} disabled={project.available === false}>
+                  {selectedPath === project.path ? "Selected" : "Select"}
+                </button>
+                <button type="button" className="history-view-button" onClick={() => onUnregister(project)} disabled={Boolean(unregisteringPath)}>
+                  {unregisteringPath === project.path ? "Unregistering..." : "Unregister"}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
       {!loading && projects.length === 0 ? <p className="muted">No project folders found.</p> : null}
       {selected && selected.available !== false ? (
@@ -1400,7 +1405,7 @@ function ScanReport({ result, report, comparison, trustContext, viewMode, open, 
           <h2>Scan Report</h2>
           <p className="muted">Findings are review prompts, not proof of a problem.</p>
         </div>
-        <span className={`risk large risk-${result?.overall_risk || "none"}`}>{result?.overall_risk || "none"}</span>
+        {result ? <ScanHeaderStatus result={result} completeness={report.completeness} /> : null}
       </summary>
       <div className="section-body">
       {!result ? <p className="muted">Run a scan to see findings for this project.</p> : null}
@@ -1456,8 +1461,8 @@ function ScanSummary({ report, risk }) {
   return (
     <div className="scan-summary">
       <div>
-        <span className="summary-label">Overall risk</span>
-        <strong className={`risk risk-${risk || "none"}`}>{risk || "none"}</strong>
+        <span className="summary-label">Recorded risk</span>
+        <strong className={`risk risk-${risk || "none"}`}>{risk === "none" ? "No recorded risk" : risk}</strong>
       </div>
       <div>
         <span className="summary-label">Findings</span>
@@ -1471,6 +1476,20 @@ function ScanSummary({ report, risk }) {
         <span className="summary-label">Ignored</span>
         <strong>{report.ignoredFileCount}</strong>
       </div>
+    </div>
+  );
+}
+
+function ScanHeaderStatus({ result, completeness }) {
+  const findingCount = result.findingCount ?? result.findings?.length ?? 0;
+  const risk = result.overall_risk || "none";
+  return (
+    <div className="scan-header-status">
+      <span className={`scan-header-finding-count${completeness.known && completeness.complete && findingCount === 0 ? " verified" : ""}`}>
+        {findingCountLabel(findingCount)}
+      </span>
+      <span className={`scan-header-coverage ${coverageState(completeness)}`}>{coverageHeaderLabel(completeness)}</span>
+      {risk !== "none" ? <span className={`risk risk-${risk}`}>Risk: {risk}</span> : null}
     </div>
   );
 }
@@ -1815,12 +1834,12 @@ function History({ scans, selectedScanId, onSelectScan, open, onOpenChange }) {
               <strong>{formatDate(scan.scan_date)}</strong>
               <span>{formatFindingSummary(scan.findingSummary)}</span>
             </div>
-            <span className={`risk risk-${scan.overall_risk}`}>{scan.overall_risk}</span>
+            <span className={`risk risk-${scan.overall_risk}`}>{scan.overall_risk === "none" ? findingCountLabel(scan.findingCount ?? scan.findings.length) : `Risk: ${scan.overall_risk}`}</span>
             <div className="history-counts">
-              <span>{scan.findingCount ?? scan.findings.length} findings</span>
+              {scan.overall_risk !== "none" ? <span>{findingCountLabel(scan.findingCount ?? scan.findings.length)}</span> : null}
               <span>{scan.reviewedFileCount ?? 0} reviewed</span>
               <span>{scan.ignoredFileCount ?? 0} ignored</span>
-              <span>{coverageLabel(completeness)}</span>
+              <span>{projectCoverageText(completeness)}</span>
             </div>
             <button type="button" className="history-view-button" onClick={() => onSelectScan(selected ? null : scan.id)}>
               {selected ? "Viewing" : "View"}
@@ -2167,22 +2186,34 @@ function coverageDetail(completeness) {
 }
 
 function projectCoverageLabel(project) {
-  if (!project?.last_scan_time) return "Not scanned";
-  return coverageLabel(normalizeScanCompleteness({ scanCompleteness: project.last_scan_completeness }));
+  if (!project?.last_scan_time) return "Coverage: Not scanned";
+  return projectCoverageText(normalizeScanCompleteness({ scanCompleteness: project.last_scan_completeness }));
 }
 
-function projectRiskLabel(project) {
-  return project?.scan_state === "not_scanned" || !project?.last_scan_time
-    ? "Not scanned"
-    : project.last_risk_level;
+function projectFindingRiskLabel(project) {
+  if (project?.scan_state === "not_scanned" || !project?.last_scan_time) return "Findings: Not scanned";
+  return project.last_risk_level === "none"
+    ? "Findings: None recorded"
+    : `Risk: ${formatRiskLabel(project.last_risk_level)}`;
 }
 
-function projectRiskContext(project) {
-  if (!project?.last_scan_time || project.last_risk_level !== "none") return "";
-  const completeness = normalizeScanCompleteness({ scanCompleteness: project.last_scan_completeness });
-  return completeness.known
-    ? (completeness.complete ? "" : "No findings recorded; scan incomplete")
-    : "No findings recorded; coverage unknown";
+function projectCoverageText(completeness) {
+  if (!completeness.known) return "Coverage: Unknown";
+  return completeness.complete ? "Coverage: Complete" : "Coverage: Incomplete";
+}
+
+function findingCountLabel(count) {
+  return `${count} ${count === 1 ? "finding" : "findings"}`;
+}
+
+function coverageHeaderLabel(completeness) {
+  if (!completeness.known) return "Coverage unknown";
+  return completeness.complete ? "Complete coverage" : "Incomplete coverage";
+}
+
+function coverageState(completeness) {
+  if (!completeness.known) return "unknown";
+  return completeness.complete ? "complete" : "incomplete";
 }
 
 function scanActivityLabel(scan) {
