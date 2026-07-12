@@ -129,6 +129,7 @@ def row_to_scan(row: sqlite3.Row) -> dict[str, Any]:
         "reviewedFiles": _metadata_list(metadata, "reviewedFiles"),
         "zone": str(metadata.get("zone") or "Unknown"),
         "scanCompleteness": _scan_completeness(metadata),
+        "dependencyTrust": _dependency_trust(metadata),
     }
 
 
@@ -206,6 +207,7 @@ def _scan_completeness(metadata: dict[str, Any]) -> dict[str, Any] | None:
         "fileInspectionFailureCount",
         "oversizedFileCount",
         "unsafePathCount",
+        "dependencyAnalysisFailureCount",
     )
     counts = {
         field: max(0, int(value.get(field, 0)))
@@ -219,6 +221,11 @@ def _scan_completeness(metadata: dict[str, Any]) -> dict[str, Any] | None:
         **counts,
         "issueCount": issue_count,
     }
+
+
+def _dependency_trust(metadata: dict[str, Any]) -> dict[str, Any] | None:
+    value = metadata.get("dependencyTrust")
+    return value if isinstance(value, dict) else None
 
 
 def _summarize_findings(findings: list[dict[str, str]]) -> dict[str, int]:

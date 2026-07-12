@@ -100,6 +100,7 @@ export function normalizeScanCompleteness(result) {
       fileInspectionFailureCount: 0,
       oversizedFileCount: 0,
       unsafePathCount: 0,
+      dependencyAnalysisFailureCount: 0,
       issueCount: 0,
     };
   }
@@ -108,6 +109,7 @@ export function normalizeScanCompleteness(result) {
     fileInspectionFailureCount: nonNegativeCount(value.fileInspectionFailureCount),
     oversizedFileCount: nonNegativeCount(value.oversizedFileCount),
     unsafePathCount: nonNegativeCount(value.unsafePathCount),
+    dependencyAnalysisFailureCount: nonNegativeCount(value.dependencyAnalysisFailureCount),
   };
   const issueCount = Object.values(counts).reduce((total, count) => total + count, 0);
   return {
@@ -158,6 +160,9 @@ export function buildScanReportMarkdown(result, report, comparison, trustContext
     "## Scan completeness",
     formatScanCompleteness(completeness),
     "",
+    "## Dependency Trust",
+    formatDependencyTrust(result?.dependencyTrust, findings),
+    "",
     "## Findings",
     formatFindings(findings),
     "",
@@ -205,6 +210,78 @@ export function buildScanReportMarkdown(result, report, comparison, trustContext
   ].join("\n");
 }
 
+function formatDependencyTrust(value, findings) {
+  const trust = normalizeDependencyTrust(value);
+  if (!trust.available) {
+    return [
+      "Status: Analysis unavailable. This scan predates offline dependency analysis.",
+      "",
+      "Offline-only: no registry reputation, malware intelligence, dependency installation, installed-code inspection, or project-code execution was performed.",
+    ].join("\n");
+  }
+  const dependencyFindingCount = findings.filter((finding) => presentText(finding?.type).startsWith("dependency-")).length;
+  const lines = [
+    `Status: ${escapeMarkdownText(dependencyStatusLabel(trust))}`,
+    `- Ecosystems: ${trust.ecosystems.length ? trust.ecosystems.map(inlineCode).join(", ") : "None detected"}`,
+    `- Manifests detected: ${trust.manifests.length}`,
+    `- Lockfiles detected: ${trust.lockfiles.length}`,
+    `- Direct dependencies: ${trust.directDependencyCount}`,
+    `- Locked dependencies: ${trust.lockedDependencyCount}`,
+    `- Integrity coverage: ${trust.integrityCoverage.present}/${trust.integrityCoverage.total}`,
+    `- Unusual or non-registry sources: ${trust.unusualSourceCount}`,
+    `- Install-script indicators: ${trust.installScriptIndicatorCount}`,
+    `- Consistency issues: ${trust.consistencyIssueCount}`,
+    `- Dependency changes: ${trust.comparison.changeCount}`,
+    `- Dependency findings: ${dependencyFindingCount} (detailed evidence appears once in the Findings section)`,
+    `- Baseline: ${escapeMarkdownText(trust.comparison.baselineStatus)}`,
+  ];
+  if (trust.limitations.length) {
+    lines.push("", "### Analysis limitations");
+    trust.limitations.forEach((item) => {
+      const path = item.path ? `${inlineCode(item.path)}: ` : "";
+      lines.push(`- ${path}${escapeMarkdownText(item.explanation || item.reason)}`);
+    });
+  }
+  lines.push("", "### Direct dependencies");
+  const direct = trust.entries.filter((entry) => entry.direct);
+  if (!direct.length) {
+    lines.push("No direct dependencies recorded.");
+  } else {
+    lines.push("| Ecosystem | Package | Group | Requested | Locked | Source | Integrity |", "|---|---|---|---|---|---|---|");
+    direct.forEach((entry) => {
+      lines.push(`| ${markdownCell(entry.ecosystem)} | ${markdownCell(entry.name)} | ${markdownCell(entry.group)} | ${markdownCell(entry.requestedSpecification || "Not recorded")} | ${markdownCell(entry.lockedVersion || "Not recorded")} | ${markdownCell(`${entry.sourceType}${entry.sourceIdentifier ? ` (${entry.sourceIdentifier})` : ""}`)} | ${entry.integrityPresent ? "Recorded" : "Not recorded"} |`);
+    });
+    if (trust.hiddenEntryCount) lines.push(`\n${trust.hiddenEntryCount} additional normalized entries are omitted from this compact report.`);
+  }
+  lines.push("", "### Changes since previous compatible scan");
+  if (trust.comparison.baselineStatus !== "available") {
+    lines.push(escapeMarkdownText(trust.comparison.explanation || "No compatible dependency baseline is available."));
+  } else if (!trust.comparison.changes.length && trust.comparison.changeCount === 0) {
+    lines.push("No dependency changes recorded.");
+  } else {
+    trust.comparison.changes.forEach((change) => {
+      const subject = change.name || change.currentValue || "dependency analysis";
+      const previous = change.previousValue ? ` (previously ${inlineCode(change.previousValue)})` : "";
+      lines.push(`- ${escapeMarkdownText(change.changeType)}: ${inlineCode(subject)}${change.lockedVersion ? ` ${inlineCode(change.lockedVersion)}` : ""}${previous}`);
+    });
+    const fileChangeLabels = {
+      manifestsAdded: "manifest-added",
+      manifestsRemoved: "manifest-removed",
+      lockfilesAdded: "lockfile-added",
+      lockfilesRemoved: "lockfile-removed",
+    };
+    Object.entries(fileChangeLabels).forEach(([key, label]) => {
+      trust.comparison.fileChanges[key].forEach((path) => lines.push(`- ${label}: ${inlineCode(path)}`));
+    });
+  }
+  lines.push("", "Offline-only: CodexForge did not contact registries, evaluate package reputation, install dependencies, inspect installed dependency code, or execute project code.");
+  return lines.join("\n");
+}
+
+function markdownCell(value) {
+  return escapeMarkdownText(presentText(value) || "Not recorded").replaceAll("|", "\\|");
+}
+
 function formatScanCompleteness(completeness) {
   if (!completeness.known) {
     return "Status: Coverage unknown. This older scan does not contain completeness metadata.";
@@ -215,6 +292,7 @@ function formatScanCompleteness(completeness) {
     `- File inspection/read failures: ${completeness.fileInspectionFailureCount}`,
     `- Oversized files skipped: ${completeness.oversizedFileCount}`,
     `- Unsafe linked or hardlinked paths skipped: ${completeness.unsafePathCount}`,
+    `- Dependency analysis failures: ${completeness.dependencyAnalysisFailureCount}`,
     `- Total inspection issues: ${completeness.issueCount}`,
   ].join("\n");
 }
@@ -456,3 +534,4 @@ function formatReportDate(value) {
   if (Number.isNaN(date.getTime())) return presentText(value);
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date);
 }
+import { dependencyStatusLabel, normalizeDependencyTrust } from "./dependencyTrust.js";

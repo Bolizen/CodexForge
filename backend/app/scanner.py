@@ -5,11 +5,12 @@ import os
 from pathlib import Path
 from typing import Any
 
+from .dependency_trust import MAX_DEPENDENCY_BYTES, analyze_dependencies, is_dependency_metadata
 from .safety import has_multiple_hardlinks, is_reparse_point_or_symlink
 
 
 RISK_ORDER = {"none": 0, "low": 1, "medium": 2, "high": 3}
-MANIFESTS = {"package.json", "requirements.txt", "pyproject.toml"}
+MANIFESTS = {"package.json", "requirements.txt", "pyproject.toml", "pipfile"}
 LIFECYCLE_SCRIPTS = {
     "preinstall",
     "install",
@@ -21,11 +22,13 @@ LIFECYCLE_SCRIPTS = {
 }
 LOCKFILES = {
     "package-lock.json",
+    "npm-shrinkwrap.json",
     "pnpm-lock.yaml",
     "yarn.lock",
     "poetry.lock",
     "uv.lock",
     "requirements.lock.txt",
+    "pipfile.lock",
 }
 SECRET_FILE_NAMES = {
     ".env",
@@ -62,7 +65,7 @@ PATTERNS = {
 }
 
 
-def scan_project(project_path: Path) -> dict[str, Any]:
+def scan_project(project_path: Path, previous_dependency_trust: dict[str, Any] | None = None) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
     manifests: list[str] = []
     lockfiles: list[str] = []
@@ -75,7 +78,10 @@ def scan_project(project_path: Path) -> dict[str, Any]:
         "fileInspectionFailureCount": 0,
         "oversizedFileCount": 0,
         "unsafePathCount": 0,
+        "dependencyAnalysisFailureCount": 0,
     }
+    dependency_inputs: list[tuple[Path, str]] = []
+    generic_failed_dependency_paths: set[str] = set()
     ignore_patterns, ignore_finding, ignore_issue = _load_ignore_patterns(project_path)
     reported_linked_paths: set[str] = set()
     failed_inspection_paths: set[str] = set()
@@ -154,12 +160,16 @@ def scan_project(project_path: Path) -> dict[str, Any]:
             lower_name = filename.lower()
             suffix = file_path.suffix.lower()
             is_secret_file = _is_secret_file(lower_name, suffix)
+            dependency_metadata = is_dependency_metadata(relative_path)
 
-            if lower_name in MANIFESTS:
+            if lower_name in MANIFESTS or _is_requirements_manifest(relative_path):
                 manifests.append(relative_path)
 
             if lower_name in LOCKFILES:
                 lockfiles.append(relative_path)
+
+            if dependency_metadata:
+                dependency_inputs.append((file_path, relative_path))
 
             if is_secret_file:
                 secret_files.append(relative_path)
@@ -196,13 +206,38 @@ def scan_project(project_path: Path) -> dict[str, Any]:
                 file_path,
                 relative_path,
                 is_package_json=lower_name == "package.json",
+                max_bytes=MAX_DEPENDENCY_BYTES if dependency_metadata else MAX_TEXT_BYTES,
             )
             findings.extend(content_findings)
             lifecycle_scripts.extend(package_scripts)
             if issue:
                 issue_counts[issue] += 1
+                if dependency_metadata:
+                    generic_failed_dependency_paths.add(relative_path)
             else:
                 reviewed_files.append(relative_path)
+
+    dependency_trust = analyze_dependencies(
+        project_path,
+        dependency_inputs,
+        previous=previous_dependency_trust,
+    )
+    dependency_findings = dependency_trust.pop("findings", [])
+    dependency_parse_paths = {
+        finding.get("path", "")
+        for finding in dependency_findings
+        if finding.get("type") == "dependency-manifest-parse-error"
+    }
+    findings = [
+        finding for finding in findings
+        if not (finding.get("type") == "package-json-read-error" and finding.get("path") in dependency_parse_paths)
+    ]
+    findings.extend(dependency_findings)
+    dependency_failed_paths = set(dependency_trust.get("failedFiles", []))
+    reviewed_files = [path for path in reviewed_files if path not in dependency_failed_paths]
+    dependency_gap_count = max(0, int(dependency_trust.get("completenessGapCount", 0)))
+    already_counted = len(dependency_failed_paths.intersection(generic_failed_dependency_paths))
+    issue_counts["dependencyAnalysisFailureCount"] = max(0, dependency_gap_count - already_counted)
 
     issue_count = sum(issue_counts.values())
 
@@ -217,6 +252,7 @@ def scan_project(project_path: Path) -> dict[str, Any]:
         "reviewedFiles": sorted(reviewed_files),
         "reviewedFileCount": len(reviewed_files),
         "zone": _infer_zone(project_path),
+        "dependencyTrust": dependency_trust,
         "scanCompleteness": {
             "complete": issue_count == 0,
             **issue_counts,
@@ -230,6 +266,7 @@ def _inspect_file_content(
     relative_path: str,
     *,
     is_package_json: bool,
+    max_bytes: int = MAX_TEXT_BYTES,
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]], str | None]:
     try:
         file_size = file_path.stat().st_size
@@ -244,7 +281,7 @@ def _inspect_file_content(
             error=_sanitized_error(error),
         )], [], "fileInspectionFailureCount"
 
-    if file_size > MAX_TEXT_BYTES:
+    if file_size > max_bytes:
         return [_inspection_finding(
             relative_path,
             "oversized-file-skipped",
@@ -252,13 +289,13 @@ def _inspect_file_content(
             "File content was not inspected because it exceeds the configured content-inspection size limit.",
             "Review this file manually or reduce its size before relying on scan coverage.",
             fileSizeBytes=file_size,
-            sizeLimitBytes=MAX_TEXT_BYTES,
+            sizeLimitBytes=max_bytes,
             reason="content-size-limit",
         )], [], "oversizedFileCount"
 
     try:
         with file_path.open("rb") as file_handle:
-            content = file_handle.read(MAX_TEXT_BYTES + 1)
+            content = file_handle.read(max_bytes + 1)
     except OSError as error:
         return [_inspection_finding(
             relative_path,
@@ -270,7 +307,7 @@ def _inspect_file_content(
             error=_sanitized_error(error),
         )], [], "fileInspectionFailureCount"
 
-    if len(content) > MAX_TEXT_BYTES:
+    if len(content) > max_bytes:
         return [_inspection_finding(
             relative_path,
             "oversized-file-skipped",
@@ -278,7 +315,7 @@ def _inspect_file_content(
             "File content was not inspected because it exceeds the configured content-inspection size limit.",
             "Review this file manually or reduce its size before relying on scan coverage.",
             fileSizeBytes=max(file_size, len(content)),
-            sizeLimitBytes=MAX_TEXT_BYTES,
+            sizeLimitBytes=max_bytes,
             reason="content-size-limit",
         )], [], "oversizedFileCount"
 
@@ -468,6 +505,17 @@ def _has_severity(findings: list[dict[str, str]], severity: str) -> bool:
 
 def _is_secret_file(lower_name: str, suffix: str) -> bool:
     return lower_name in SECRET_FILE_NAMES or suffix in SECRET_FILE_SUFFIXES
+
+
+def _is_requirements_manifest(relative_path: str) -> bool:
+    path = Path(relative_path)
+    lower_name = path.name.lower()
+    lower_parts = [part.lower() for part in path.parts]
+    return (
+        lower_name == "requirements.txt"
+        or (lower_name.startswith("requirements-") and lower_name.endswith(".txt"))
+        or ("requirements" in lower_parts[:-1] and lower_name.endswith(".txt"))
+    )
 
 
 def _infer_zone(project_path: Path) -> str:

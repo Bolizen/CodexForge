@@ -206,6 +206,62 @@ test("exports complete, incomplete, and unknown scan coverage conservatively", (
   assert.doesNotMatch(older, /^Status: Complete$/m);
 });
 
+test("exports dependency trust summaries, changes, limitations, and detailed evidence once", () => {
+  const dependencyFinding = finding(
+    "dependency-integrity-changed",
+    "locks/[prod]|package-lock.json",
+    "Integrity `changed` for the same locked material.",
+    { package: "alpha", ecosystem: "node" },
+  );
+  const result = {
+    ...scanResult([dependencyFinding]),
+    dependencyTrust: {
+      schemaVersion: 1,
+      status: "incomplete",
+      ecosystems: ["node", "python"],
+      manifests: ["package.json", "pyproject.toml"],
+      lockfiles: ["package-lock.json"],
+      directDependencyCount: 1,
+      lockedDependencyCount: 2,
+      integrityCoverage: { total: 2, present: 1, missing: 1 },
+      unusualSourceCount: 1,
+      installScriptIndicatorCount: 1,
+      consistencyIssueCount: 0,
+      entries: [{
+        ecosystem: "node",
+        name: "alpha|tool",
+        group: "dependencies",
+        requestedSpecification: "^1|^2",
+        lockedVersion: "1.2.0",
+        sourceType: "registry",
+        sourceIdentifier: "registry.example",
+        integrityPresent: true,
+        direct: true,
+      }],
+      comparison: {
+        baselineStatus: "available",
+        changeCount: 2,
+        changes: [{ changeType: "analysis-status-changed", previousValue: "complete", currentValue: "incomplete" }],
+        fileChanges: { manifestsAdded: [], manifestsRemoved: [], lockfilesAdded: ["locks/[prod]|package-lock.json"], lockfilesRemoved: [] },
+      },
+      limitations: [{ reason: "size-limit", path: "locks/[prod]|package-lock.json", explanation: "Lockfile exceeded the local limit." }],
+      offlineOnly: true,
+    },
+  };
+
+  const markdown = buildScanReportMarkdown(result, reportFixture({ totalFindings: 1 }), null, { configured: false });
+
+  assert.match(markdown, /^## Dependency Trust$/m);
+  assert.match(markdown, /^Status: Analysis incomplete$/m);
+  assert.match(markdown, /Integrity coverage: 1\/2/);
+  assert.match(markdown, /alpha\\\|tool/);
+  assert.match(markdown, /analysis-status-changed: `incomplete` \(previously `complete`\)/);
+  assert.match(markdown, /lockfile-added: `locks\/\[prod\]\|package-lock\.json`/);
+  assert.match(markdown, /Offline-only: CodexForge did not contact registries/);
+  assert.equal(markdown.match(/- Type: `dependency-integrity-changed`/g)?.length, 1);
+  assert.doesNotMatch(markdown, /undefined|null|\[object Object\]/);
+});
+
 function finding(type, path, explanation, metadata = {}) {
   return {
     type,

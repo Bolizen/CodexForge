@@ -236,6 +236,7 @@ class ScannerCompletenessTests(unittest.TestCase):
             "fileInspectionFailureCount": 0,
             "oversizedFileCount": 0,
             "unsafePathCount": 0,
+            "dependencyAnalysisFailureCount": 0,
             "issueCount": 0,
         })
 

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { dependencyStatusLabel, normalizeDependencyTrust } from "./dependencyTrust.js";
 import {
   isAbortError,
   projectListResponsePolicy,
@@ -1413,6 +1414,7 @@ function ScanReport({ result, report, comparison, trustContext, viewMode, open, 
         <>
           <ScanSummary report={report} risk={result.overall_risk} />
           <ScanCompletenessSummary completeness={report.completeness} />
+          <DependencyTrustPanel trust={report.dependencyTrust} findings={report.dependencyFindings} trustContext={trustContext} />
           <div className="scan-view-label">
             {viewMode === "history" ? `Viewing history scan from ${formatDate(result.scan_date)}` : `Viewing latest scan from ${formatDate(result.scan_date)}`}
           </div>
@@ -1504,11 +1506,100 @@ function ScanCompletenessSummary({ completeness }) {
           <span>File inspection failures: {completeness.fileInspectionFailureCount}</span>
           <span>Oversized files: {completeness.oversizedFileCount}</span>
           <span>Unsafe paths skipped: {completeness.unsafePathCount}</span>
+          <span>Dependency analysis failures: {completeness.dependencyAnalysisFailureCount}</span>
           <span>Total issues: {completeness.issueCount}</span>
         </div>
       )}
     </section>
   );
+}
+
+function DependencyTrustPanel({ trust, findings, trustContext }) {
+  const directEntries = trust.entries.filter((entry) => entry.direct);
+  const visibleFindings = findings.slice(0, 50);
+  const expectedManagers = trustContext?.packageManagers || [];
+  const managerContext = trust.packageManagers.map((manager) => ({
+    manager,
+    expected: expectedManagers.some((expected) => String(expected).toLowerCase() === manager.toLowerCase()),
+  }));
+  return (
+    <section className={`dependency-trust dependency-status-${trust.status}`}>
+      <div className="panel-heading">
+        <div>
+          <h3>Dependency Trust</h3>
+          <p className="muted">Offline heuristic checks of supported local manifest and lockfile structures.</p>
+        </div>
+        <span className="dependency-status">{dependencyStatusLabel(trust)}</span>
+      </div>
+      {!trust.available ? <p className="muted">This scan has no dependency-trust metadata. Run a new scan to analyze locally available dependency metadata.</p> : (
+        <>
+          <div className="dependency-metrics">
+            <div><strong>{trust.directDependencyCount}</strong><span>Direct</span></div>
+            <div><strong>{trust.lockedDependencyCount}</strong><span>Locked</span></div>
+            <div><strong>{trust.integrityCoverage.present}/{trust.integrityCoverage.total}</strong><span>Integrity</span></div>
+            <div><strong>{trust.unusualSourceCount}</strong><span>Unusual sources</span></div>
+            <div><strong>{trust.installScriptIndicatorCount}</strong><span>Install indicators</span></div>
+            <div><strong>{trust.consistencyIssueCount}</strong><span>Consistency issues</span></div>
+          </div>
+          <p className="dependency-ecosystems">
+            Ecosystems: {trust.ecosystems.length ? trust.ecosystems.join(", ") : "None detected"}. Manifests detected: {trust.manifests.length}. Lockfiles detected: {trust.lockfiles.length}.
+          </p>
+          {trust.status === "complete" && findings.length === 0 ? <p className="good">Supported offline checks completed with no dependency findings. This does not provide full dependency resolution, registry reputation, or malware intelligence.</p> : null}
+          {trust.limitations.length ? (
+            <details className="dependency-details" open>
+              <summary>Analysis limitations ({trust.limitations.length})</summary>
+              <ul>{trust.limitations.map((item, index) => <li key={`${item.path}-${item.reason}-${index}`}>{item.path ? <code>{item.path}</code> : null} {item.explanation || item.reason}</li>)}</ul>
+            </details>
+          ) : null}
+          {managerContext.length ? <p className="muted">Package managers: {managerContext.map((item) => `${item.manager}${expectedManagers.length ? (item.expected ? " (expected)" : " (not in trust profile)") : ""}`).join(", ")}.</p> : null}
+          <details className="dependency-details">
+            <summary>Direct dependencies ({trust.directDependencyCount})</summary>
+            <div className="dependency-entry-list">
+              {directEntries.map((entry) => (
+                <div className="dependency-entry" key={`${entry.ecosystem}-${entry.name}-${entry.group}`}>
+                  <strong>{entry.name}</strong>
+                  <span>{entry.group}</span>
+                  <code>{entry.requestedSpecification || "No requested specification"}</code>
+                  <span>Locked: {entry.lockedVersion || "Not recorded"}</span>
+                  <span>Source: {entry.sourceType}{entry.sourceIdentifier ? ` (${entry.sourceIdentifier})` : ""}</span>
+                  <span>Integrity: {entry.integrityPresent ? "Recorded" : "Not recorded"}</span>
+                </div>
+              ))}
+              {!directEntries.length ? <p className="muted">No direct dependencies recorded.</p> : null}
+            </div>
+            {trust.hiddenEntryCount ? <p className="muted">{trust.hiddenEntryCount} additional normalized entries are not rendered.</p> : null}
+          </details>
+          <details className="dependency-details">
+            <summary>Changes since previous scan ({trust.comparison.changeCount})</summary>
+            {trust.comparison.baselineStatus !== "available" ? <p className="muted">{trust.comparison.explanation || "No compatible dependency baseline is available."}</p> : (
+              trust.comparison.changeCount === 0 ? <p className="muted">No dependency changes recorded.</p> : <ul>
+                {trust.comparison.changes.map((change, index) => <li key={`${change.changeType}-${change.name}-${index}`}><strong>{change.changeType}</strong>: {change.name || change.currentValue || "dependency analysis"}{change.lockedVersion ? ` ${change.lockedVersion}` : ""}{change.previousValue ? ` (previously ${change.previousValue})` : ""}</li>)}
+                {dependencyFileChanges(trust.comparison.fileChanges).map((change) => <li key={`${change.type}-${change.path}`}><strong>{change.type}</strong>: <code>{change.path}</code></li>)}
+              </ul>
+            )}
+            {trust.comparison.hiddenChangeCount ? <p className="muted">{trust.comparison.hiddenChangeCount} additional changes are not rendered.</p> : null}
+          </details>
+          <details className="dependency-details">
+            <summary>Dependency findings ({findings.length})</summary>
+            {visibleFindings.map((finding, index) => <FindingItem finding={finding} key={findingKey(finding, index)} />)}
+            {!findings.length ? <p className="muted">No dependency findings recorded.</p> : null}
+            {findings.length > visibleFindings.length ? <p className="muted">{findings.length - visibleFindings.length} additional dependency findings are summarized in the counts.</p> : null}
+          </details>
+          <p className="review-note">Offline-only: CodexForge does not contact registries, score package reputation, install dependencies, inspect installed package code, or execute project code.</p>
+        </>
+      )}
+    </section>
+  );
+}
+
+function dependencyFileChanges(fileChanges) {
+  const labels = {
+    manifestsAdded: "manifest-added",
+    manifestsRemoved: "manifest-removed",
+    lockfilesAdded: "lockfile-added",
+    lockfilesRemoved: "lockfile-removed",
+  };
+  return Object.entries(labels).flatMap(([key, type]) => (fileChanges?.[key] || []).map((path) => ({ type, path })));
 }
 
 function PathDetails({ title, items, recordedCount, emptyText, guidance }) {
@@ -1933,6 +2024,7 @@ function buildScanReport(result) {
   const lockfileFindings = findings.filter((finding) => finding.type === "lockfile" || lockfilePaths.has(finding.path));
   const findingTypeCounts = summarizeFindingTypes(findings);
   const metadataFindings = findings.filter((finding) => {
+    if (String(finding.type || "").startsWith("dependency-")) return false;
     if (finding.type === "secret-looking-file" || finding.type === "executable-or-script-file") return false;
     if (finding.type === "package-lifecycle-script" || lifecyclePaths.has(finding.path)) return false;
     if (finding.type === "lockfile" || lockfilePaths.has(finding.path)) return false;
@@ -1940,6 +2032,7 @@ function buildScanReport(result) {
   });
 
   const reviewedFileCount = result?.reviewedFileCount ?? scanArray(result, "reviewedFiles").length;
+  const dependencyFindings = findings.filter((finding) => String(finding.type || "").startsWith("dependency-"));
   const storedReviewedFiles = scanArray(result, "reviewedFiles");
   const reviewedFiles = storedReviewedFiles.length
     ? storedReviewedFiles
@@ -1962,6 +2055,8 @@ function buildScanReport(result) {
     secretFindings,
     executableFindings,
     metadataFindings,
+    dependencyFindings,
+    dependencyTrust: normalizeDependencyTrust(result?.dependencyTrust),
     ignoredFiles,
     zone: result?.zone || "Unknown",
     completeness: normalizeScanCompleteness(result),

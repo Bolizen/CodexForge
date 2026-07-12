@@ -266,7 +266,14 @@ def write_agents(payload: AgentPreviewRequest) -> dict[str, object]:
 @app.post("/api/scans")
 def run_scan(payload: ProjectPathRequest) -> dict[str, object]:
     project = _ensure_project(payload.project_path)
-    result = scan_project(project)
+    with get_connection() as connection:
+        previous_row = connection.execute(
+            "SELECT * FROM scans WHERE project_path = ? ORDER BY scan_date DESC, id DESC LIMIT 1",
+            (str(project),),
+        ).fetchone()
+    previous_scan = row_to_scan(previous_row) if previous_row else None
+    previous_dependency_trust = previous_scan.get("dependencyTrust") if previous_scan else None
+    result = scan_project(project, previous_dependency_trust=previous_dependency_trust)
     now = _now()
     finding_summary = _finding_summary(result["findings"])
     scan_metadata = _scan_metadata(result)
@@ -316,6 +323,7 @@ def run_scan(payload: ProjectPathRequest) -> dict[str, object]:
         "reviewedFileCount": result["reviewedFileCount"],
         "zone": result["zone"],
         "scanCompleteness": result["scanCompleteness"],
+        "dependencyTrust": result.get("dependencyTrust"),
     }
 
 
@@ -513,4 +521,5 @@ def _scan_metadata(result: dict[str, object]) -> dict[str, object]:
         "reviewedFiles": result.get("reviewedFiles", []),
         "zone": result.get("zone", "Unknown"),
         "scanCompleteness": result.get("scanCompleteness"),
+        "dependencyTrust": result.get("dependencyTrust"),
     }

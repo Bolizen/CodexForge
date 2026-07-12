@@ -367,6 +367,75 @@ test("legacy scan with unknown coverage never presents verified clean", async ()
   assertHistorySummary("0 findings", "Coverage: Unknown");
 });
 
+test("complete Node and Python dependency analysis renders compact offline trust evidence", async () => {
+  await renderApp();
+  const result = {
+    ...withCompleteness(scan(90, "low", "2026-07-11T14:00:00Z"), {
+      complete: true,
+      traversalFailureCount: 0,
+      fileInspectionFailureCount: 0,
+      oversizedFileCount: 0,
+      unsafePathCount: 0,
+      dependencyAnalysisFailureCount: 0,
+    }),
+    dependencyTrust: dependencyTrustFixture(),
+  };
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), {
+    scans: [result],
+    trustProfile: { project_path: PROJECT_A_PATH, trustedPackageManagers: ["npm"] },
+  });
+  await openReports();
+
+  const panel = document.querySelector(".dependency-trust");
+  assert.match(panel.textContent, /Supported checks complete/);
+  assert.match(panel.textContent, /Node and Python|node, python/i);
+  assert.match(panel.textContent, /alpha/);
+  assert.match(panel.textContent, /requests/);
+  assert.match(panel.textContent, /npm \(expected\)/);
+  assert.match(panel.textContent, /Offline-only/);
+  assert.ok(panel.querySelectorAll(".dependency-entry").length <= 50);
+});
+
+test("dependency analysis distinguishes incomplete and legacy history states", async () => {
+  await renderApp();
+  const incomplete = {
+    ...scan(91, "medium", "2026-07-11T14:01:00Z"),
+    dependencyTrust: dependencyTrustFixture({
+      status: "incomplete",
+      limitations: [{ reason: "dependency-metadata-size-limit", explanation: "Lockfile exceeded the analysis limit.", path: "package-lock.json" }],
+    }),
+    findings: [{ type: "dependency-analysis-incomplete", severity: "medium", path: "package-lock.json", explanation: "Dependency analysis is incomplete.", action: "Review manually." }],
+    findingCount: 1,
+  };
+  const legacy = { ...scan(92, "none", "2026-07-11T13:59:00Z"), dependencyTrust: undefined };
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [incomplete, legacy] });
+  await openReports();
+  assert.match(document.querySelector(".dependency-trust").textContent, /Analysis incomplete/);
+  assert.match(document.querySelector(".dependency-trust").textContent, /Lockfile exceeded/);
+  const historyRows = [...document.querySelectorAll(".history-row")];
+  assert.equal(historyRows.length, 2);
+  await click(historyRows[1].querySelector(".history-view-button"));
+  assert.match(document.querySelector(".dependency-trust").textContent, /Analysis unavailable/);
+  assert.doesNotMatch(document.querySelector(".dependency-trust").textContent, /no dependency issues/i);
+});
+
+test("late dependency history cannot cross project selection", async () => {
+  await renderApp();
+  const detailsA = await takeDetailRequests(PROJECT_A_PATH);
+  await resolveDetails(detailsA, { skip: ["scanHistory"] });
+  await selectProject("Project B");
+  const detailsB = await takeDetailRequests(PROJECT_B_PATH);
+  await resolveDetails(detailsB, {
+    scans: [{ ...scan(93, "low", "2026-07-11T14:02:00Z"), project_path: PROJECT_B_PATH, dependencyTrust: dependencyTrustFixture({ entries: [{ ecosystem: "node", name: "current-b", group: "dependencies", sourceType: "registry", direct: true }] }) }],
+  });
+  await openReports();
+  assert.match(document.querySelector(".dependency-trust").textContent, /current-b/);
+
+  await respond(detailsA.scanHistory, { scans: [{ ...scan(94, "high", "2026-07-11T14:03:00Z"), dependencyTrust: dependencyTrustFixture({ entries: [{ ecosystem: "node", name: "obsolete-a", group: "dependencies", sourceType: "registry", direct: true }] }) }] });
+  assert.match(document.querySelector(".dependency-trust").textContent, /current-b/);
+  assert.doesNotMatch(document.querySelector(".dependency-trust").textContent, /obsolete-a/);
+});
+
 test("scan button gates duplicate submissions and shows progress", async () => {
   await renderReadyProjectA();
   await click(runScanButton());
@@ -584,7 +653,7 @@ async function resolveDetails(requests, options = {}) {
   const responses = {
     notes: { notes: options.notes || [] },
     scanHistory: { scans: options.scans || [] },
-    trustProfile: { project_path: requestProjectPath(requests.trustProfile) },
+    trustProfile: options.trustProfile || { project_path: requestProjectPath(requests.trustProfile) },
     agentsExists: { exists: Boolean(options.agentsExists) },
   };
   await act(async () => {
@@ -924,6 +993,7 @@ function withCompleteness(value, completeness) {
     fileInspectionFailureCount: completeness.fileInspectionFailureCount || 0,
     oversizedFileCount: completeness.oversizedFileCount || 0,
     unsafePathCount: completeness.unsafePathCount || 0,
+    dependencyAnalysisFailureCount: completeness.dependencyAnalysisFailureCount || 0,
   };
   return {
     ...value,
@@ -932,6 +1002,33 @@ function withCompleteness(value, completeness) {
       ...counts,
       issueCount: Object.values(counts).reduce((total, count) => total + count, 0),
     },
+  };
+}
+
+function dependencyTrustFixture(overrides = {}) {
+  return {
+    schemaVersion: 1,
+    status: "complete",
+    ecosystems: ["node", "python"],
+    manifests: ["package.json", "requirements.txt"],
+    lockfiles: ["package-lock.json"],
+    packageManagers: ["npm", "pip"],
+    directDependencyCount: 2,
+    lockedDependencyCount: 2,
+    integrityCoverage: { total: 2, present: 1, missing: 1 },
+    unusualSourceCount: 0,
+    installScriptIndicatorCount: 0,
+    consistencyIssueCount: 0,
+    changeCount: 0,
+    highestFindingSeverity: "none",
+    entries: [
+      { ecosystem: "node", name: "alpha", group: "dependencies", requestedSpecification: "^1", lockedVersion: "1.2.0", sourceType: "registry", integrityPresent: true, direct: true },
+      { ecosystem: "python", name: "requests", group: "requirements", requestedSpecification: "==2.31.0", lockedVersion: "2.31.0", sourceType: "registry", integrityPresent: false, direct: true },
+    ],
+    comparison: { baselineStatus: "unavailable", changeCount: 0, changes: [], explanation: "No previous dependency analysis is available." },
+    limitations: [],
+    offlineOnly: true,
+    ...overrides,
   };
 }
 
