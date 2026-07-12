@@ -123,63 +123,6 @@ test("A to B to A uses the fresh A detail response", async () => {
   assert.doesNotMatch(document.body.textContent, /Obsolete first A note/);
 });
 
-test("two scans resolving out of order keep the newest requested scan visible", async () => {
-  await renderReadyProjectA();
-  await click(runScanButton());
-  const firstScanRequest = await fetchHarness.next("/api/scans", { method: "POST" });
-  await click(runScanButton());
-  const secondScanRequest = await fetchHarness.next("/api/scans", { method: "POST" });
-
-  const firstScan = scan(1, "low", "2026-07-11T10:00:00Z");
-  const secondScan = scan(2, "high", "2026-07-11T10:01:00Z");
-  await finishScan(secondScanRequest, secondScan, [secondScan, firstScan]);
-  assert.equal(visibleRisk(), "HIGH");
-
-  await finishScan(firstScanRequest, firstScan, [firstScan, secondScan]);
-  assert.equal(visibleRisk(), "HIGH");
-  assert.doesNotMatch(messageText(), /obsolete|failed/i);
-});
-
-test("an obsolete scan response cannot clear a selected history scan", async () => {
-  await renderApp();
-  const baselineScan = scan(0, "medium", "2026-07-11T09:59:00Z");
-  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), {
-    scans: [baselineScan],
-  });
-  await click(runScanButton());
-  const firstScanRequest = await fetchHarness.next("/api/scans", { method: "POST" });
-  await click(runScanButton());
-  const secondScanRequest = await fetchHarness.next("/api/scans", { method: "POST" });
-
-  const firstScan = scan(1, "low", "2026-07-11T10:00:00Z");
-  const secondScan = scan(2, "high", "2026-07-11T10:01:00Z");
-  await finishScan(secondScanRequest, secondScan, [secondScan, baselineScan]);
-  await openReports();
-  await selectHistoryScan("medium");
-
-  await finishScan(firstScanRequest, firstScan, [firstScan, secondScan, baselineScan]);
-  const selectedRow = document.querySelector(".history-row.selected-history-row");
-  assert.ok(selectedRow, "Expected the selected history row to remain selected");
-  assert.equal(selectedRow.querySelector(".risk").textContent, "medium");
-  assert.match(selectedRow.textContent, /Viewing/);
-});
-
-test("an older failed scan cannot replace a newer success with an error", async () => {
-  await renderReadyProjectA();
-  await click(runScanButton());
-  const firstScanRequest = await fetchHarness.next("/api/scans", { method: "POST" });
-  await click(runScanButton());
-  const secondScanRequest = await fetchHarness.next("/api/scans", { method: "POST" });
-
-  const secondScan = scan(2, "high", "2026-07-11T10:01:00Z");
-  await finishScan(secondScanRequest, secondScan, [secondScan]);
-  await reject(firstScanRequest, new Error("Obsolete scan failed"));
-
-  assert.equal(visibleRisk(), "HIGH");
-  assert.doesNotMatch(messageText(), /Obsolete scan failed/);
-  assert.match(messageText(), /Scan complete/);
-});
-
 test("loading and errors stay scoped to the selected project during aborts", async () => {
   await renderApp();
   const detailsA = await takeDetailRequests(PROJECT_A_PATH);
@@ -248,12 +191,175 @@ test("complete clean and older scans use distinct coverage states", async () => 
   assert.doesNotMatch(document.body.textContent, /Complete scan with no findings detected/);
 });
 
-async function renderApp(projects = [PROJECT_A, PROJECT_B]) {
+test("scan button gates duplicate submissions and shows progress", async () => {
+  await renderReadyProjectA();
+  await click(runScanButton());
+  await click(runScanButton());
+
+  assert.equal(fetchHarness.count("/api/scans", "POST"), 1);
+  assert.equal(runScanButton().disabled, true);
+  assert.equal(runScanButton().textContent, "Scanning...");
+
+  const request = await fetchHarness.next("/api/scans", { method: "POST" });
+  await finishScan(request, scan(10, "low", "2026-07-11T13:00:00Z"), []);
+  assert.equal(runScanButton().disabled, false);
+});
+
+test("scan remains active through follow-up loading", async () => {
+  await renderReadyProjectA();
+  await click(runScanButton());
+  const request = await fetchHarness.next("/api/scans", { method: "POST" });
+
+  await respond(request, scan(11, "low", "2026-07-11T13:01:00Z"));
+  const historyRequest = await fetchHarness.next("/api/scans/history", { projectPath: PROJECT_A_PATH });
+  assert.equal(runScanButton().disabled, true);
+  assert.equal(runScanButton().textContent, "Scanning...");
+
+  await respond(historyRequest, { scans: [] });
+  const projectsRequest = await fetchHarness.next("/api/projects");
+  await respond(projectsRequest, { project_root: "C:/workspace", message: "", projects: [PROJECT_A, PROJECT_B] });
+  assert.equal(runScanButton().disabled, false);
+});
+
+test("switching projects releases scan loading ownership", async () => {
+  await renderReadyProjectA();
+  await click(runScanButton());
+  const request = await fetchHarness.next("/api/scans", { method: "POST" });
+
+  await selectProject("Project B");
+  await resolveDetails(await takeDetailRequests(PROJECT_B_PATH));
+  assert.equal(runScanButton().disabled, false);
+  assert.equal(runScanButton().textContent, "Run Scan");
+
+  await respond(request, { ...scan(12, "low", "2026-07-11T13:02:00Z"), project_path: PROJECT_A_PATH });
+  const projectsRequest = await fetchHarness.next("/api/projects");
+  await respond(projectsRequest, { project_root: "C:/workspace", message: "", projects: [PROJECT_A, PROJECT_B] });
+  assert.equal(runScanButton().disabled, false);
+});
+
+test("switching projects releases metadata loading ownership", async () => {
+  await renderReadyProjectA();
+  await click(document.querySelector('a[href="#projects"]'));
+  await click(buttonWithText("Save Metadata"));
+  const request = await fetchHarness.next("/api/projects/metadata", { method: "PUT" });
+
+  const projectBRow = [...document.querySelectorAll(".projects-table-row")]
+    .find((row) => row.textContent.includes("Project B"));
+  await click([...projectBRow.querySelectorAll("button")].find((button) => button.textContent === "Select"));
+  await resolveDetails(await takeDetailRequests(PROJECT_B_PATH));
+  assert.equal(buttonWithText("Save Metadata").disabled, false);
+
+  await respond(request, PROJECT_A);
+  assert.equal(buttonWithText("Save Metadata").disabled, false);
+});
+
+test("workspace root failure preserves selection and success invalidates it", async () => {
+  await renderReadyProjectA();
+  window.confirm = () => true;
+  await openSettings();
+  await click(buttonWithText("Change"));
+  const rootInput = document.querySelector('.settings-section input');
+  await input(rootInput, "C:/missing");
+  await click(buttonWithText("Apply Workspace Root"));
+  assert.equal(fetchHarness.count("/api/config/project-root", "PUT"), 1);
+  const failed = await fetchHarness.next("/api/config/project-root", { method: "PUT" });
+  await respond(failed, { detail: "Workspace root does not exist." }, 404);
+  assert.match(selectedProjectText(), /Project A/);
+  assert.match(document.body.textContent, /Workspace root does not exist/);
+
+  await input(rootInput, "C:/new-workspace");
+  await click(buttonWithText("Apply Workspace Root"));
+  assert.equal(fetchHarness.count("/api/config/project-root", "PUT"), 2);
+  const changed = await fetchHarness.next("/api/config/project-root", { method: "PUT" });
+  await respond(changed, { project_root: "C:/new-workspace" });
+  assert.ok(fetchHarness.count("/api/projects") >= 2);
+  const projectsRequest = await fetchHarness.next("/api/projects");
+  await respond(projectsRequest, { project_root: "C:/new-workspace", message: "", projects: [] });
+  assert.doesNotMatch(selectedProjectText(), /Project A/);
+  assert.match(document.body.textContent, /C:\/new-workspace/);
+});
+
+test("health status is backed by the health endpoint", async () => {
+  await renderApp();
+  assert.match(document.querySelector(".scanner-status").textContent, /Backend reachable/);
+  assert.doesNotMatch(document.body.textContent, /All systems operational/);
+});
+
+test("health failure does not claim systems are operational", async () => {
+  await renderApp([PROJECT_A, PROJECT_B], new Error("Backend offline"));
+  assert.match(document.querySelector(".scanner-status").textContent, /Backend unavailable/);
+  assert.match(document.querySelector(".scanner-status").textContent, /Scanner unavailable/);
+  assert.doesNotMatch(document.querySelector(".scanner-status").textContent, /Scanner ready/);
+  assert.doesNotMatch(document.body.textContent, /All systems operational/);
+});
+
+test("project metadata and unregister lifecycle update the real UI flow", async () => {
+  const availableA = { ...PROJECT_A, available: true, availability: "available", scan_state: "not_scanned", description: "Old description", project_type: "Python" };
+  const missingB = { ...PROJECT_B, available: false, availability: "missing", scan_state: "not_scanned", description: "Missing project" };
+  await renderApp([availableA, missingB]);
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH));
+  window.confirm = () => true;
+  await click(document.querySelector('a[href="#projects"]'));
+  assert.match(document.body.textContent, /Old description/);
+  assert.match(document.body.textContent, /Python/);
+  assert.match(document.body.textContent, /Unavailable: missing/);
+  assert.match(document.body.textContent, /Not scanned/);
+
+  const form = document.querySelector(".projects-section form");
+  await input(form.querySelector("input"), "TypeScript");
+  await input(form.querySelector("textarea"), "New description");
+  await click(buttonWithText("Save Metadata"));
+  const save = await fetchHarness.next("/api/projects/metadata", { method: "PUT" });
+  await respond(save, { ...availableA, description: "New description", project_type: "TypeScript" });
+  const refreshed = await fetchHarness.next("/api/projects");
+  await respond(refreshed, { project_root: "C:/workspace", message: "", projects: [{ ...availableA, description: "New description", project_type: "TypeScript" }, missingB] });
+  assert.match(document.body.textContent, /New description/);
+
+  const selectedRow = [...document.querySelectorAll(".projects-table-row")].find((row) => row.textContent.includes("Project A"));
+  await click([...selectedRow.querySelectorAll("button")].find((button) => button.textContent.includes("Unregister")));
+  const unregister = await fetchHarness.next("/api/projects", { method: "DELETE" });
+  await respond(unregister, { unregistered: true, path: PROJECT_A_PATH, message: "Project unregistered. Project files were not changed." });
+  const afterUnregister = await fetchHarness.next("/api/projects");
+  await respond(afterUnregister, { project_root: "C:/workspace", message: "", projects: [missingB] });
+  assert.match(messageText(), /files were not changed/);
+  assert.doesNotMatch(document.querySelector(".projects-table").textContent, /Project A/);
+});
+
+test("same-project AGENTS previews and trust saves keep the newest response", async () => {
+  await renderReadyProjectA();
+  await openSettings();
+  const purpose = document.querySelector('textarea[placeholder="Project purpose"]');
+  await input(purpose, "First purpose");
+  await click(buttonWithText("Preview"));
+  const firstPreview = await fetchHarness.next("/api/agents/preview", { method: "POST" });
+  await input(purpose, "Second purpose");
+  await click(buttonWithText("Preview"));
+  const secondPreview = await fetchHarness.next("/api/agents/preview", { method: "POST" });
+  await respond(secondPreview, { content: "# New preview" });
+  await respond(firstPreview, { content: "# Obsolete preview" });
+  assert.match(document.body.textContent, /New preview/);
+  assert.doesNotMatch(document.body.textContent, /Obsolete preview/);
+
+  await click(document.querySelector('a[href="#trust-profiles"]'));
+  const trustNotes = document.querySelector('.trust-profile-form textarea[placeholder="Local review notes for this project"]');
+  await input(trustNotes, "First trust save");
+  await click(buttonWithText("Save Trust Profile"));
+  const firstSave = await fetchHarness.next("/api/trust-profile", { method: "PUT" });
+  await input(trustNotes, "Second trust save");
+  await click(buttonWithText("Save Trust Profile"));
+  const secondSave = await fetchHarness.next("/api/trust-profile", { method: "PUT" });
+  await respond(secondSave, { project_path: PROJECT_A_PATH, notes: "Second trust save" });
+  await respond(firstSave, { project_path: PROJECT_A_PATH, notes: "First trust save" });
+  assert.equal(trustNotes.value, "Second trust save");
+});
+
+async function renderApp(projects = [PROJECT_A, PROJECT_B], healthError = null) {
   await act(async () => {
     root.render(React.createElement(App));
   });
   const projectsRequest = await fetchHarness.next("/api/projects");
   const changelogRequest = await fetchHarness.next("/api/changelog");
+  const healthRequest = await fetchHarness.next("/api/health");
   await act(async () => {
     projectsRequest.respond({
       project_root: "C:/workspace",
@@ -261,6 +367,8 @@ async function renderApp(projects = [PROJECT_A, PROJECT_B]) {
       projects,
     });
     changelogRequest.respond({ entries: [] });
+    if (healthError) healthRequest.reject(healthError);
+    else healthRequest.respond({ status: "ok" });
     await flushMicrotasks();
   });
 }
@@ -361,9 +469,26 @@ async function click(element) {
   });
 }
 
-async function respond(request, data) {
+async function input(element, value) {
+  assert.ok(element, "Expected input element");
   await act(async () => {
-    request.respond(data);
+    const setter = Object.getOwnPropertyDescriptor(element.constructor.prototype, "value").set;
+    setter.call(element, value);
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+    await flushMicrotasks();
+  });
+}
+
+function buttonWithText(text) {
+  const button = [...document.querySelectorAll("button")].find((item) => item.textContent.includes(text));
+  assert.ok(button, `Expected button containing ${text}`);
+  return button;
+}
+
+async function respond(request, data, status = 200) {
+  await act(async () => {
+    request.respond(data, status);
     await flushMicrotasks();
   });
 }
@@ -464,7 +589,11 @@ function createFetchHarness() {
     assert.equal(waiters.length, 0, "Pending fetch waiters leaked from a test");
   }
 
-  return { fetch, next, settleAll };
+  function count(path, method = "GET") {
+    return requests.filter((request) => request.url.pathname === path && request.method === method).length;
+  }
+
+  return { fetch, next, settleAll, count };
 }
 
 function requestPredicate(path, options) {
@@ -496,6 +625,8 @@ function defaultResponse(request) {
       return { project_root: "C:/workspace", message: "", projects: [PROJECT_A, PROJECT_B] };
     case "/api/changelog":
       return { entries: [] };
+    case "/api/health":
+      return { status: "ok" };
     case "/api/notes":
       return request.method === "POST" ? note(99, "Cleanup note") : { notes: [] };
     case "/api/scans/history":

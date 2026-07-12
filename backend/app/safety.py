@@ -34,6 +34,34 @@ def configured_root(root_value: str) -> Path:
         raise HTTPException(status_code=400, detail="Workspace root could not be resolved.") from exc
 
 
+def existing_workspace_root(root_value: str) -> Path:
+    try:
+        candidate = Path(root_value).expanduser()
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Workspace root is malformed.") from exc
+    if not candidate.is_absolute():
+        raise HTTPException(status_code=400, detail="Workspace root must be an absolute path.")
+    if any(part == ".." for part in re.split(r"[\\/]+", str(candidate))):
+        raise HTTPException(status_code=400, detail="Workspace root traversal is not allowed.")
+
+    absolute = Path(os.path.abspath(candidate))
+    current = Path(absolute.anchor)
+    try:
+        for part in absolute.parts[1:]:
+            current /= part
+            if not current.exists():
+                raise HTTPException(status_code=404, detail="Workspace root does not exist.")
+            if is_reparse_point_or_symlink(current, raise_on_error=True):
+                raise HTTPException(status_code=403, detail="Workspace root cannot contain symlinks, junctions, or reparse points.")
+        if not absolute.is_dir():
+            raise HTTPException(status_code=400, detail="Workspace root must be a directory.")
+        return absolute.resolve(strict=True)
+    except HTTPException:
+        raise
+    except OSError as exc:
+        raise HTTPException(status_code=403, detail="Workspace root could not be safely inspected.") from exc
+
+
 def ensure_inside_root(
     workspace_root: Path,
     candidate: str | Path,

@@ -76,6 +76,11 @@ The app runs at `http://127.0.0.1:5173`.
 
 - CodexForge stores its SQLite database at `backend/data/codexforge.db`.
 - The default workspace root is `~/CodexForgeProjects`. You can configure a different absolute workspace root in the app.
+- Settings validates workspace-root changes through the backend. Changing roots clears visible project state but never moves or deletes project folders.
+- Project descriptions and project types can be edited from the Projects screen. Unregister removes CodexForge database records only; project files remain untouched, including when the registered folder is unavailable.
+- Registered folders that are missing or unsafe remain visible with an unavailable status so they can be unregistered.
+- Active scans disable duplicate submissions and show a scanning state. Backend reachability is checked at startup and can be retried without polling.
+- Projects with no scan are labelled `Not scanned`; risk and scan-coverage status are displayed separately.
 - If the configured workspace root does not exist, the dashboard shows a clear message and does not create it until you create a project.
 - Creating a project will create the configured workspace root folder if needed.
 - The scanner dashboard groups scan results by overall risk, manifests, lockfiles, lifecycle scripts, secret findings, executable files, zone/metadata findings, reviewed files, and ignored files.

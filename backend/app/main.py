@@ -21,9 +21,9 @@ from .database import (
     scan_completeness_for_row,
     set_setting,
 )
-from .safety import configured_root, ensure_inside_root, ensure_project_directory, has_multiple_hardlinks, sanitize_folder_name
+from .safety import configured_root, ensure_inside_root, ensure_project_directory, existing_workspace_root, has_multiple_hardlinks, sanitize_folder_name
 from .scanner import scan_project
-from .schemas import AgentPreviewRequest, NoteCreate, ProjectCreate, ProjectPathRequest, ProjectRegister, ProjectRootUpdate, TrustProfileRequest
+from .schemas import AgentPreviewRequest, NoteCreate, ProjectCreate, ProjectMetadataUpdate, ProjectPathRequest, ProjectRegister, ProjectRootUpdate, TrustProfileRequest
 
 
 app = FastAPI(title="CodexForge API")
@@ -69,7 +69,7 @@ def get_changelog() -> dict[str, object]:
 
 @app.put("/api/config/project-root")
 def update_project_root(payload: ProjectRootUpdate) -> dict[str, str]:
-    root = configured_root(payload.project_root)
+    root = existing_workspace_root(payload.project_root)
     set_setting(WORKSPACE_ROOT_SETTING, str(root))
     return {"project_root": str(root)}
 
@@ -82,32 +82,44 @@ def list_projects() -> dict[str, object]:
 
     projects = []
     root_exists = root.exists()
-    if root_exists:
-        with get_connection() as connection:
-            rows = connection.execute(
-                "SELECT path, name, description, project_type FROM projects ORDER BY name COLLATE NOCASE"
-            ).fetchall()
-        for row in rows:
-            try:
-                project_path = ensure_inside_root(root, row["path"])
-            except HTTPException:
-                continue
-            if not project_path.exists() or not project_path.is_dir():
-                continue
-            path = str(project_path)
-            scan = scans.get(path)
-            projects.append(
-                {
-                    "name": row["name"],
-                    "path": path,
-                    "description": row["description"],
-                    "project_type": row["project_type"],
-                    "last_scan_time": scan["scan_date"] if scan else None,
-                    "last_risk_level": scan["overall_risk"] if scan else "none",
-                    "last_scan_completeness": scan_completeness_for_row(scan) if scan else None,
-                    "notes_count": counts.get(path, 0),
-                }
-            )
+    with get_connection() as connection:
+        rows = connection.execute(
+            "SELECT path, name, description, project_type FROM projects ORDER BY name COLLATE NOCASE"
+        ).fetchall()
+    for row in rows:
+        stored_path = Path(row["path"])
+        try:
+            stored_path.absolute().relative_to(root)
+        except (OSError, ValueError):
+            continue
+        availability = "available"
+        try:
+            project_path = ensure_inside_root(root, stored_path)
+            if not project_path.exists():
+                availability = "missing"
+            elif not project_path.is_dir():
+                availability = "not-a-directory"
+        except HTTPException as exc:
+            availability = "missing" if exc.status_code == 404 else "unsafe"
+        except OSError:
+            availability = "inaccessible"
+        path = str(stored_path)
+        scan = scans.get(path)
+        projects.append(
+            {
+                "name": row["name"],
+                "path": path,
+                "description": row["description"],
+                "project_type": row["project_type"],
+                "last_scan_time": scan["scan_date"] if scan else None,
+                "last_risk_level": scan["overall_risk"] if scan else "none",
+                "last_scan_completeness": scan_completeness_for_row(scan) if scan else None,
+                "scan_state": "scanned" if scan else "not_scanned",
+                "available": availability == "available",
+                "availability": availability,
+                "notes_count": counts.get(path, 0),
+            }
+        )
 
     return {
         "project_root": str(root),
@@ -149,6 +161,54 @@ def register_project(payload: ProjectRegister) -> dict[str, str]:
             (str(project_path), project_path.name, payload.description.strip(), payload.project_type.strip(), now),
         )
     return {"name": project_path.name, "path": str(project_path), "created_at": now}
+
+
+@app.put("/api/projects/metadata")
+def update_project_metadata(payload: ProjectMetadataUpdate) -> dict[str, object]:
+    project = _ensure_project(payload.project_path)
+    description = payload.description.strip()
+    project_type = payload.project_type.strip()
+    with get_connection() as connection:
+        cursor = connection.execute(
+            "UPDATE projects SET description = ?, project_type = ? WHERE path = ?",
+            (description, project_type, str(project)),
+        )
+    if cursor.rowcount != 1:
+        raise HTTPException(status_code=404, detail="Project registration was not found.")
+    return {
+        "path": str(project),
+        "name": project.name,
+        "description": description,
+        "project_type": project_type,
+    }
+
+
+@app.delete("/api/projects")
+def unregister_project(payload: ProjectPathRequest) -> dict[str, object]:
+    root = _project_root()
+    try:
+        requested = Path(payload.project_path).expanduser()
+        if not requested.is_absolute() or "\0" in str(requested) or any(part == ".." for part in str(requested).replace("\\", "/").split("/")):
+            raise ValueError
+        requested.absolute().relative_to(root)
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Project path is not a valid registration in this workspace.") from exc
+
+    path = str(requested.absolute())
+    with get_connection() as connection:
+        row = connection.execute("SELECT name FROM projects WHERE path = ?", (path,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Project registration was not found.")
+        connection.execute("DELETE FROM scans WHERE project_path = ?", (path,))
+        connection.execute("DELETE FROM notes WHERE project_path = ?", (path,))
+        connection.execute("DELETE FROM project_trust_profiles WHERE project_path = ?", (path,))
+        connection.execute("DELETE FROM projects WHERE path = ?", (path,))
+    return {
+        "unregistered": True,
+        "name": row["name"],
+        "path": path,
+        "message": "Project unregistered. Project files were not changed.",
+    }
 
 
 @app.post("/api/agents/preview")

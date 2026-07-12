@@ -80,9 +80,19 @@ export function App() {
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [selectedSection, setSelectedSection] = useState("workspace");
   const [projectDetailsRevision, setProjectDetailsRevision] = useState(0);
+  const [isScanning, setIsScanning] = useState(false);
+  const [backendHealth, setBackendHealth] = useState("checking");
+  const [workspaceRootChanging, setWorkspaceRootChanging] = useState(false);
+  const [workspaceRootError, setWorkspaceRootError] = useState("");
+  const [metadataSaving, setMetadataSaving] = useState(false);
+  const [unregisteringPath, setUnregisteringPath] = useState("");
   const selectedPathRef = useRef("");
   const projectGenerationRef = useRef(0);
   const projectsRequestRef = useRef({ id: 0, controller: null });
+  const workspaceRequestRef = useRef(0);
+  const workspaceGenerationRef = useRef(0);
+  const unregisterRequestRef = useRef(0);
+  const scanningRef = useRef(false);
   const projectRequestsByScopeRef = useRef({
     notes: 0,
     scanHistory: 0,
@@ -90,6 +100,10 @@ export function App() {
     agentsExists: 0,
     scanMutation: 0,
     noteMutation: 0,
+    agentPreview: 0,
+    agentWrite: 0,
+    trustSave: 0,
+    metadataSave: 0,
   });
 
   const selectedProject = useMemo(
@@ -114,6 +128,7 @@ export function App() {
   useEffect(() => {
     refreshProjects();
     loadChangelog();
+    checkHealth();
   }, []);
 
   useEffect(() => {
@@ -155,6 +170,9 @@ export function App() {
     setNotes([]);
     setNoteBody("");
     setCopyStatus("");
+    scanningRef.current = false;
+    setIsScanning(false);
+    setMetadataSaving(false);
   }
 
   function selectProject(path) {
@@ -239,11 +257,12 @@ export function App() {
       if (!policy.applySelection) return;
 
       const currentPath = selectedPathRef.current;
-      const stillSelected = data.projects.some((project) => project.path === currentPath);
-      if ((!currentPath || !stillSelected) && data.projects.length > 0) {
-        selectProject(data.projects[0].path);
+      const selectableProjects = data.projects.filter((project) => project.available !== false);
+      const stillSelected = selectableProjects.some((project) => project.path === currentPath);
+      if ((!currentPath || !stillSelected) && selectableProjects.length > 0) {
+        selectProject(selectableProjects[0].path);
       }
-      if (!stillSelected && data.projects.length === 0) {
+      if (!stillSelected && selectableProjects.length === 0) {
         selectProject("");
       }
     } catch (error) {
@@ -259,6 +278,7 @@ export function App() {
 
   async function createProject(event) {
     event.preventDefault();
+    const workspaceGeneration = workspaceGenerationRef.current;
     try {
       const created = await api("/api/projects", {
         method: "POST",
@@ -268,18 +288,20 @@ export function App() {
           project_type: createForm.project_type,
         },
       });
+      if (workspaceGenerationRef.current !== workspaceGeneration) return;
       setMessage(`Created ${created.name}`);
       setCreateForm({ project_name: "", existing_path: "", description: "", project_type: "" });
       setCreateProjectOpen(false);
       await refreshProjects();
-      selectProject(created.path);
+      if (workspaceGenerationRef.current === workspaceGeneration) selectProject(created.path);
     } catch (error) {
-      setMessage(error.message);
+      if (workspaceGenerationRef.current === workspaceGeneration) setMessage(error.message);
     }
   }
 
   async function registerExistingProject(event) {
     event.preventDefault();
+    const workspaceGeneration = workspaceGenerationRef.current;
     try {
       const registered = await api("/api/projects/register", {
         method: "POST",
@@ -289,13 +311,14 @@ export function App() {
           project_type: createForm.project_type,
         },
       });
+      if (workspaceGenerationRef.current !== workspaceGeneration) return;
       setMessage(`Registered ${registered.name}`);
       setCreateForm({ project_name: "", existing_path: "", description: "", project_type: "" });
       setCreateProjectOpen(false);
       await refreshProjects();
-      selectProject(registered.path);
+      if (workspaceGenerationRef.current === workspaceGeneration) selectProject(registered.path);
     } catch (error) {
-      setMessage(error.message);
+      if (workspaceGenerationRef.current === workspaceGeneration) setMessage(error.message);
     }
   }
 
@@ -308,27 +331,39 @@ export function App() {
     }
   }
 
+  async function checkHealth() {
+    setBackendHealth("checking");
+    try {
+      const data = await api("/api/health");
+      setBackendHealth(data.status === "ok" ? "reachable" : "unreachable");
+    } catch {
+      setBackendHealth("unreachable");
+    }
+  }
+
   async function previewAgents(event) {
     event.preventDefault();
     const projectPath = selectedPathRef.current;
     const generation = projectGenerationRef.current;
     if (!projectPath) return;
+    const requestId = beginScopedProjectRequest("agentPreview");
     try {
       const data = await api("/api/agents/preview", {
         method: "POST",
         body: { project_path: projectPath, ...agentForm },
       });
-      if (!projectRequestIsCurrent(projectPath, generation)) return;
+      if (!scopedProjectRequestIsCurrent("agentPreview", requestId, projectPath, generation)) return;
       setAgentPreview(data.content);
       setMessage("AGENTS.md preview generated.");
     } catch (error) {
-      if (!isAbortError(error) && projectRequestIsCurrent(projectPath, generation)) {
+      if (!isAbortError(error) && scopedProjectRequestIsCurrent("agentPreview", requestId, projectPath, generation)) {
         setMessage(error.message);
       }
     }
   }
 
   function updateAgentField(field, value) {
+    beginScopedProjectRequest("agentPreview");
     setAgentForm({ ...agentForm, [field]: value });
     setAgentPreview("");
   }
@@ -337,6 +372,8 @@ export function App() {
     const projectPath = selectedPathRef.current;
     const generation = projectGenerationRef.current;
     if (!projectPath) return;
+    beginScopedProjectRequest("agentPreview");
+    const requestId = beginScopedProjectRequest("agentWrite");
     try {
       const overwrite = agentsExists
         ? window.confirm("AGENTS.md already exists for this project. Overwrite it with the previewed content?")
@@ -353,7 +390,7 @@ export function App() {
         method: "POST",
         body: { project_path: projectPath, ...agentForm, overwrite },
       });
-      if (!projectRequestIsCurrent(projectPath, generation)) {
+      if (!scopedProjectRequestIsCurrent("agentWrite", requestId, projectPath, generation)) {
         reloadSelectedProjectAfterStaleMutation(projectPath, generation);
         return;
       }
@@ -367,7 +404,7 @@ export function App() {
       setAgentsExists(true);
       setMessage(data.message || `Wrote ${data.path}`);
     } catch (error) {
-      if (!isAbortError(error) && projectRequestIsCurrent(projectPath, generation)) {
+      if (!isAbortError(error) && scopedProjectRequestIsCurrent("agentWrite", requestId, projectPath, generation)) {
         setMessage(error.message);
       }
     }
@@ -390,8 +427,11 @@ export function App() {
   async function runScan() {
     const projectPath = selectedPathRef.current;
     const generation = projectGenerationRef.current;
-    if (!projectPath) return;
+    const workspaceGeneration = workspaceGenerationRef.current;
+    if (!projectPath || scanningRef.current) return;
     const requestId = beginScopedProjectRequest("scanMutation");
+    scanningRef.current = true;
+    setIsScanning(true);
     try {
       const data = await api("/api/scans", { method: "POST", body: { project_path: projectPath } });
       if (scopedProjectRequestIsCurrent("scanMutation", requestId, projectPath, generation)) {
@@ -410,10 +450,17 @@ export function App() {
       } else {
         reloadSelectedProjectAfterStaleMutation(projectPath, generation);
       }
-      await refreshProjects(projectPath, generation);
+      if (workspaceGenerationRef.current === workspaceGeneration) {
+        await refreshProjects(projectPath, generation);
+      }
     } catch (error) {
       if (!isAbortError(error) && scopedProjectRequestIsCurrent("scanMutation", requestId, projectPath, generation)) {
         setMessage(error.message);
+      }
+    } finally {
+      if (scopedProjectRequestIsCurrent("scanMutation", requestId, projectPath, generation)) {
+        scanningRef.current = false;
+        setIsScanning(false);
       }
     }
   }
@@ -465,20 +512,21 @@ export function App() {
     const projectPath = selectedPathRef.current;
     const generation = projectGenerationRef.current;
     if (!projectPath) return;
+    beginScopedProjectRequest("trustProfile");
+    const requestId = beginScopedProjectRequest("trustSave");
     try {
       const data = await api("/api/trust-profile", {
         method: "PUT",
         body: { ...profile, project_path: projectPath },
       });
-      if (!projectRequestIsCurrent(projectPath, generation)) {
+      if (!scopedProjectRequestIsCurrent("trustSave", requestId, projectPath, generation)) {
         reloadSelectedProjectAfterStaleMutation(projectPath, generation);
         return;
       }
-      beginScopedProjectRequest("trustProfile");
       setTrustProfile({ ...EMPTY_TRUST_PROFILE, ...data });
       setTrustProfileMessage("Trust profile saved.");
     } catch (error) {
-      if (!isAbortError(error) && projectRequestIsCurrent(projectPath, generation)) {
+      if (!isAbortError(error) && scopedProjectRequestIsCurrent("trustSave", requestId, projectPath, generation)) {
         setTrustProfileMessage(error.message);
       }
     }
@@ -488,6 +536,7 @@ export function App() {
     event.preventDefault();
     const projectPath = selectedPathRef.current;
     const generation = projectGenerationRef.current;
+    const workspaceGeneration = workspaceGenerationRef.current;
     if (!projectPath || !noteBody.trim()) return;
     const requestId = beginScopedProjectRequest("noteMutation");
     try {
@@ -504,11 +553,102 @@ export function App() {
         reloadSelectedProjectAfterStaleMutation(projectPath, generation);
       }
 
-      await refreshProjects(projectPath, generation);
+      if (workspaceGenerationRef.current === workspaceGeneration) {
+        await refreshProjects(projectPath, generation);
+      }
     } catch (error) {
       if (!isAbortError(error) && scopedProjectRequestIsCurrent("noteMutation", requestId, projectPath, generation)) {
         setMessage(error.message);
       }
+    }
+  }
+
+  async function changeWorkspaceRoot(nextRoot) {
+    const value = nextRoot.trim();
+    if (!value) {
+      setWorkspaceRootError("Workspace root is required.");
+      return;
+    }
+    if (value === projectRoot) {
+      setWorkspaceRootError("");
+      return;
+    }
+    const confirmed = window.confirm(
+      "Changing the workspace root clears the selected project and visible project details. Only registrations under the new root will be available. No project files or folders will be deleted. Continue?",
+    );
+    if (!confirmed) return;
+
+    const requestId = workspaceRequestRef.current + 1;
+    workspaceRequestRef.current = requestId;
+    setWorkspaceRootChanging(true);
+    setWorkspaceRootError("");
+    try {
+      const data = await api("/api/config/project-root", {
+        method: "PUT",
+        body: { project_root: value },
+      });
+      if (workspaceRequestRef.current !== requestId) return;
+      workspaceGenerationRef.current += 1;
+      unregisterRequestRef.current += 1;
+      setUnregisteringPath("");
+      projectsRequestRef.current.controller?.abort();
+      selectProject("");
+      setProjects([]);
+      setProjectRoot(data.project_root);
+      setProjectRootMessage("");
+      await refreshProjects();
+      if (workspaceRequestRef.current === requestId) {
+        setMessage("Workspace root changed. No project files were modified.");
+      }
+    } catch (error) {
+      if (workspaceRequestRef.current === requestId) setWorkspaceRootError(error.message);
+    } finally {
+      if (workspaceRequestRef.current === requestId) setWorkspaceRootChanging(false);
+    }
+  }
+
+  async function saveProjectMetadata(project, metadata) {
+    const projectPath = project.path;
+    const generation = projectGenerationRef.current;
+    const workspaceGeneration = workspaceGenerationRef.current;
+    const requestId = beginScopedProjectRequest("metadataSave");
+    setMetadataSaving(true);
+    try {
+      await api("/api/projects/metadata", {
+        method: "PUT",
+        body: { project_path: projectPath, ...metadata },
+      });
+      if (workspaceGenerationRef.current !== workspaceGeneration || !scopedProjectRequestIsCurrent("metadataSave", requestId, projectPath, generation)) return;
+      await refreshProjects(projectPath, generation);
+      if (scopedProjectRequestIsCurrent("metadataSave", requestId, projectPath, generation)) {
+        setMessage("Project metadata saved.");
+      }
+    } catch (error) {
+      if (scopedProjectRequestIsCurrent("metadataSave", requestId, projectPath, generation)) setMessage(error.message);
+    } finally {
+      if (scopedProjectRequestIsCurrent("metadataSave", requestId, projectPath, generation)) setMetadataSaving(false);
+    }
+  }
+
+  async function unregisterProject(project) {
+    const confirmed = window.confirm(
+      `Unregister ${project.name} (${project.path}) from CodexForge? Project files and folders will remain untouched.`,
+    );
+    if (!confirmed) return;
+    const requestId = unregisterRequestRef.current + 1;
+    const workspaceGeneration = workspaceGenerationRef.current;
+    unregisterRequestRef.current = requestId;
+    setUnregisteringPath(project.path);
+    try {
+      const data = await api("/api/projects", { method: "DELETE", body: { project_path: project.path } });
+      if (unregisterRequestRef.current !== requestId || workspaceGenerationRef.current !== workspaceGeneration) return;
+      if (selectedPathRef.current === project.path) selectProject("");
+      await refreshProjects();
+      if (unregisterRequestRef.current === requestId) setMessage(data.message);
+    } catch (error) {
+      if (unregisterRequestRef.current === requestId && workspaceGenerationRef.current === workspaceGeneration) setMessage(error.message);
+    } finally {
+      if (unregisterRequestRef.current === requestId && workspaceGenerationRef.current === workspaceGeneration) setUnregisteringPath("");
     }
   }
 
@@ -576,11 +716,13 @@ export function App() {
                 key={project.path}
                 className={`project-item ${project.path === selectedPath ? "selected" : ""}`}
                 onClick={() => selectProject(project.path)}
+                disabled={project.available === false}
               >
                 <span className="project-name">{project.name}</span>
-                <span className={`risk risk-${project.last_risk_level}`}>{project.last_risk_level}</span>
+                <span className={`risk risk-${project.last_risk_level}`}>{projectRiskLabel(project)}</span>
                 <span className="project-meta">{projectCoverageLabel(project)}</span>
                 <span className="project-path">{project.path}</span>
+                {project.available === false ? <span className="project-meta">Unavailable: {project.availability}</span> : null}
                 <span className="project-meta">{project.notes_count} notes</span>
                 <span className="project-meta scan-time">{formatDate(project.last_scan_time)}</span>
               </button>
@@ -592,8 +734,13 @@ export function App() {
         <div className="scanner-status">
           <span className="status-dot"></span>
           <div>
-            <strong>Scanner ready</strong>
-            <p>All systems operational</p>
+            <strong>{backendHealth === "reachable" ? "Backend reachable" : backendHealth === "checking" ? "Checking backend" : "Backend unavailable"}</strong>
+            <p>{backendHealth !== "reachable"
+              ? (backendHealth === "checking" ? "Scanner readiness pending" : "Scanner unavailable")
+              : selectedProject
+                ? (selectedProject.available === false ? "Project unavailable" : "Scanner ready for selected project")
+                : "No project selected"}</p>
+            {backendHealth === "unreachable" ? <button type="button" className="history-view-button" onClick={checkHealth}>Retry</button> : null}
           </div>
         </div>
       </aside>
@@ -611,8 +758,8 @@ export function App() {
             <button type="button" className="secondary-button" onClick={copyReportMarkdown} disabled={!displayedReportMarkdown}>
               Copy Markdown
             </button>
-            <button type="button" className="run-scan-button" onClick={runScan} disabled={!selectedPath}>
-              Run Scan
+            <button type="button" className="run-scan-button" onClick={runScan} disabled={!selectedPath || isScanning || selectedProject?.available === false}>
+              {isScanning ? "Scanning..." : "Run Scan"}
             </button>
           </div>
         </header>
@@ -624,6 +771,12 @@ export function App() {
         <div className="workspace-root-line" title={selectedProject?.path || projectRoot}>
           Workspace: {selectedProject?.name || "No project selected"} <span>Path: {selectedProject?.path || projectRoot || "Loading workspace root..."}</span>
         </div>
+        {selectedProject && (selectedProject.project_type || selectedProject.description) ? (
+          <div className="workspace-root-line">
+            {selectedProject.project_type ? <span>Type: {selectedProject.project_type}</span> : null}
+            {selectedProject.description ? <span>Description: {selectedProject.description}</span> : null}
+          </div>
+        ) : null}
 
         <section className="content">
           {selectedSection === "workspace" && selectedProject && !projectDetailsLoading ? (
@@ -639,7 +792,7 @@ export function App() {
           ) : null}
 
           {selectedSection === "projects" ? (
-            <ProjectsSection projects={projects} selectedPath={selectedPath} onSelectProject={selectProject} onNewProject={() => setCreateProjectOpen(true)} loading={loading} />
+            <ProjectsSection projects={projects} selectedPath={selectedPath} onSelectProject={selectProject} onNewProject={() => setCreateProjectOpen(true)} loading={loading} onSaveMetadata={saveProjectMetadata} metadataSaving={metadataSaving} onUnregister={unregisterProject} unregisteringPath={unregisteringPath} />
           ) : null}
 
           {selectedSection === "trustProfiles" && selectedProject && !projectDetailsLoading ? (
@@ -670,7 +823,7 @@ export function App() {
 
           {selectedSection === "settings" ? (
             <>
-              <SettingsSection projectRoot={projectRoot} selectedProject={selectedProject} />
+              <SettingsSection projectRoot={projectRoot} selectedProject={selectedProject} onChangeRoot={changeWorkspaceRoot} changing={workspaceRootChanging} error={workspaceRootError} />
               {selectedProject && !projectDetailsLoading ? (
                 <>
                   <AgentGenerator form={agentForm} updateField={updateAgentField} preview={agentPreview} exists={agentsExists} onPreview={previewAgents} onWrite={writeAgents} open={majorSectionsOpen.agents} onOpenChange={(open) => setMajorSectionOpen("agents", open)} />
@@ -761,7 +914,14 @@ function CreateProjectModal({ form, setForm, onSubmit, onRegister, onClose }) {
   );
 }
 
-function ProjectsSection({ projects, selectedPath, onSelectProject, onNewProject, loading }) {
+function ProjectsSection({ projects, selectedPath, onSelectProject, onNewProject, loading, onSaveMetadata, metadataSaving, onUnregister, unregisteringPath }) {
+  const selected = projects.find((project) => project.path === selectedPath) || null;
+  const [draft, setDraft] = useState({ description: "", project_type: "" });
+
+  useEffect(() => {
+    setDraft({ description: selected?.description || "", project_type: selected?.project_type || "" });
+  }, [selected?.path, selected?.description, selected?.project_type]);
+
   return (
     <section className="panel projects-section">
       <div className="panel-heading">
@@ -784,21 +944,37 @@ function ProjectsSection({ projects, selectedPath, onSelectProject, onNewProject
           <div className="projects-table-row" key={project.path}>
             <div>
               <strong>{project.name}</strong>
+              {project.project_type ? <small>{project.project_type}</small> : null}
+              {project.description ? <small>{project.description}</small> : null}
               <span>{project.path}</span>
+              {project.available === false ? <small>Unavailable: {project.availability}</small> : null}
             </div>
             <span className="project-risk-cell">
-              <span className={`risk risk-${project.last_risk_level}`}>{project.last_risk_level}</span>
+              <span className={`risk risk-${project.last_risk_level}`}>{projectRiskLabel(project)}</span>
               <small>{projectCoverageLabel(project)}</small>
             </span>
             <span>{project.notes_count}</span>
             <span>{formatDate(project.last_scan_time)}</span>
-            <button type="button" className="history-view-button" onClick={() => onSelectProject(project.path)}>
-              {selectedPath === project.path ? "Selected" : "Select"}
-            </button>
+            <div className="project-row-actions">
+              <button type="button" className="history-view-button" onClick={() => onSelectProject(project.path)} disabled={project.available === false}>
+                {selectedPath === project.path ? "Selected" : "Select"}
+              </button>
+              <button type="button" className="history-view-button" onClick={() => onUnregister(project)} disabled={Boolean(unregisteringPath)}>
+                {unregisteringPath === project.path ? "Unregistering..." : "Unregister"}
+              </button>
+            </div>
           </div>
         ))}
       </div>
       {!loading && projects.length === 0 ? <p className="muted">No project folders found.</p> : null}
+      {selected && selected.available !== false ? (
+        <form className="stack project-action-form" onSubmit={(event) => { event.preventDefault(); onSaveMetadata(selected, draft); }}>
+          <h3>Edit selected project metadata</h3>
+          <input value={draft.project_type} maxLength="120" onInput={(event) => setDraft({ ...draft, project_type: event.target.value })} placeholder="Project type (optional)" />
+          <textarea value={draft.description} maxLength="2000" onInput={(event) => setDraft({ ...draft, description: event.target.value })} placeholder="Description (optional)" rows="3" />
+          <button type="submit" disabled={metadataSaving}>{metadataSaving ? "Saving..." : "Save Metadata"}</button>
+        </form>
+      ) : null}
     </section>
   );
 }
@@ -837,19 +1013,28 @@ function ProjectExpectationsSummary({ profile, onEdit }) {
   );
 }
 
-function SettingsSection({ projectRoot, selectedProject }) {
+function SettingsSection({ projectRoot, selectedProject, onChangeRoot, changing, error }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(projectRoot);
+
+  useEffect(() => {
+    setDraft(projectRoot);
+    setEditing(false);
+  }, [projectRoot]);
+
   return (
     <section className="panel settings-section">
       <div className="panel-heading">
         <div>
           <h2>Settings</h2>
-          <p className="muted">Local workspace context. Configuration editing remains intentionally limited in this view.</p>
+          <p className="muted">Change the local workspace root without moving or deleting project folders.</p>
         </div>
       </div>
       <div className="settings-list">
         <div>
           <strong>Workspace root</strong>
           <span>{projectRoot || "Loading workspace root..."}</span>
+          {!editing ? <button type="button" className="secondary-button compact-action" onClick={() => setEditing(true)}>Change</button> : null}
         </div>
         <div>
           <strong>Selected project</strong>
@@ -860,6 +1045,20 @@ function SettingsSection({ projectRoot, selectedProject }) {
           <span>Local scanner, local SQLite storage, no cloud sync.</span>
         </div>
       </div>
+      {editing ? (
+        <form className="stack project-action-form" onSubmit={(event) => { event.preventDefault(); onChangeRoot(draft); }}>
+          <label>
+            New absolute workspace root
+            <input value={draft} onInput={(event) => setDraft(event.target.value)} disabled={changing} required />
+          </label>
+          <p className="muted">Changing roots clears visible project details and shows only registrations valid under the new root. No files or folders are deleted.</p>
+          {error ? <p className="notice">{error}</p> : null}
+          <div className="actions">
+            <button type="submit" disabled={changing}>{changing ? "Changing..." : "Apply Workspace Root"}</button>
+            <button type="button" className="secondary-button" onClick={() => { setEditing(false); setDraft(projectRoot); }} disabled={changing}>Cancel</button>
+          </div>
+        </form>
+      ) : null}
     </section>
   );
 }
@@ -1018,19 +1217,6 @@ function Changelog({ entries, open, onOpenChange }) {
           {entries.length === 0 ? <p className="muted">No changelog entries loaded.</p> : null}
       </div>
     </details>
-  );
-}
-
-function ProjectHeader({ project, onScan }) {
-  return (
-    <section className="project-header">
-      <div>
-        <h2>{project.name}</h2>
-        <p>{project.description || "No description yet."}</p>
-        <div className="path-line">{project.path}</div>
-      </div>
-      <button onClick={onScan}>Scan</button>
-    </section>
   );
 }
 
@@ -1826,6 +2012,12 @@ function coverageDetail(completeness) {
 function projectCoverageLabel(project) {
   if (!project?.last_scan_time) return "Not scanned";
   return coverageLabel(normalizeScanCompleteness({ scanCompleteness: project.last_scan_completeness }));
+}
+
+function projectRiskLabel(project) {
+  return project?.scan_state === "not_scanned" || !project?.last_scan_time
+    ? "Not scanned"
+    : project.last_risk_level;
 }
 
 function buildScanComparisonFor(scan, scans) {
