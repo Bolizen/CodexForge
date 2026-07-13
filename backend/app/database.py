@@ -56,6 +56,19 @@ def init_db() -> None:
                 profile_json TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS finding_reviews (
+                project_path TEXT NOT NULL,
+                fingerprint TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('reviewed', 'expected')),
+                note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (project_path, fingerprint)
+            );
+
+            CREATE INDEX IF NOT EXISTS finding_reviews_project_path
+            ON finding_reviews (project_path);
             """
         )
         connection.execute(

@@ -6,6 +6,7 @@ import {
   dependencyTrustHasNoSupportedMetadata,
   normalizeDependencyTrust,
 } from "./dependencyTrust.js";
+import { applyFindingReviewToScan, findingReviewLabel, findingReviewSummary } from "./findingReviews.js";
 import {
   isAbortError,
   projectListResponsePolicy,
@@ -101,6 +102,7 @@ export function App() {
   const [workspaceRootError, setWorkspaceRootError] = useState("");
   const [metadataSaving, setMetadataSaving] = useState(false);
   const [unregisteringPath, setUnregisteringPath] = useState("");
+  const [findingReviewState, setFindingReviewState] = useState({});
   const [sessionStateReady, setSessionStateReady] = useState(false);
   const [toastTop, setToastTop] = useState(112);
   const topbarRef = useRef(null);
@@ -116,6 +118,7 @@ export function App() {
   const pendingScanRestoreRef = useRef(null);
   const skipNextSessionWriteRef = useRef(false);
   const lastSessionWriteRef = useRef("");
+  const findingReviewRequestsRef = useRef(new Map());
   if (initialSessionStateRef.current === undefined) initialSessionStateRef.current = readSessionState();
   const projectRequestsByScopeRef = useRef({
     notes: 0,
@@ -244,6 +247,8 @@ export function App() {
     scanningRef.current = false;
     setIsScanning(false);
     setMetadataSaving(false);
+    findingReviewRequestsRef.current.clear();
+    setFindingReviewState({});
   }
 
   function selectProject(path, { restoring = false, force = false } = {}) {
@@ -669,6 +674,60 @@ export function App() {
     }
   }
 
+  async function saveFindingReview(finding, status, note) {
+    const fingerprint = finding?.fingerprint;
+    const projectPath = selectedPathRef.current;
+    const generation = projectGenerationRef.current;
+    if (!fingerprint || !projectPath) return;
+    const requestId = (findingReviewRequestsRef.current.get(fingerprint) || 0) + 1;
+    findingReviewRequestsRef.current.set(fingerprint, requestId);
+    setFindingReviewState((current) => ({ ...current, [fingerprint]: { saving: true, error: "", success: "" } }));
+    try {
+      const data = await api("/api/finding-reviews", {
+        method: "PUT",
+        body: { project_path: projectPath, fingerprint, status, note },
+      });
+      if (!findingReviewRequestIsCurrent(fingerprint, requestId, projectPath, generation)) return;
+      applyFindingReview(fingerprint, data.review);
+      setFindingReviewState((current) => ({ ...current, [fingerprint]: { saving: false, error: "", success: "Review saved." } }));
+    } catch (error) {
+      if (!findingReviewRequestIsCurrent(fingerprint, requestId, projectPath, generation)) return;
+      setFindingReviewState((current) => ({ ...current, [fingerprint]: { saving: false, error: error.message, success: "" } }));
+    }
+  }
+
+  async function reopenFindingReview(finding) {
+    const fingerprint = finding?.fingerprint;
+    const projectPath = selectedPathRef.current;
+    const generation = projectGenerationRef.current;
+    if (!fingerprint || !projectPath) return;
+    const requestId = (findingReviewRequestsRef.current.get(fingerprint) || 0) + 1;
+    findingReviewRequestsRef.current.set(fingerprint, requestId);
+    setFindingReviewState((current) => ({ ...current, [fingerprint]: { saving: true, error: "", success: "" } }));
+    try {
+      await api("/api/finding-reviews", {
+        method: "DELETE",
+        body: { project_path: projectPath, fingerprint },
+      });
+      if (!findingReviewRequestIsCurrent(fingerprint, requestId, projectPath, generation)) return;
+      applyFindingReview(fingerprint, null);
+      setFindingReviewState((current) => ({ ...current, [fingerprint]: { saving: false, error: "", success: "Finding reopened." } }));
+    } catch (error) {
+      if (!findingReviewRequestIsCurrent(fingerprint, requestId, projectPath, generation)) return;
+      setFindingReviewState((current) => ({ ...current, [fingerprint]: { saving: false, error: error.message, success: "" } }));
+    }
+  }
+
+  function findingReviewRequestIsCurrent(fingerprint, requestId, projectPath, generation) {
+    return findingReviewRequestsRef.current.get(fingerprint) === requestId
+      && projectRequestIsCurrent(projectPath, generation);
+  }
+
+  function applyFindingReview(fingerprint, review) {
+    setScanResult((current) => applyFindingReviewToScan(current, fingerprint, review));
+    setScanHistory((current) => current.map((scan) => applyFindingReviewToScan(scan, fingerprint, review)));
+  }
+
   async function changeWorkspaceRoot(nextRoot) {
     const value = nextRoot.trim();
     if (!value) {
@@ -963,6 +1022,9 @@ export function App() {
                 viewMode={scanViewMode}
                 isScanning={isScanning}
                 onRunScan={runScan}
+                onReviewFinding={saveFindingReview}
+                onReopenFinding={reopenFindingReview}
+                findingReviewState={findingReviewState}
                 open={majorSectionsOpen.scanReport}
                 onOpenChange={(open) => setMajorSectionOpen("scanReport", open)}
               />
@@ -1013,13 +1075,12 @@ export function App() {
 function SummaryCards({ projects, report, result, comparison }) {
   const hasScan = Boolean(result);
   const completeness = report.completeness;
-  const highestSeverity = highestFindingSeverity(result?.findings || []) || "none";
-  const emptyFindingDetail = findingAbsenceDetail(completeness);
+  const reviewSummary = report.reviewSummary;
   const cards = [
-    { label: "Risk Level", value: hasScan ? formatRiskLabel(result.overall_risk) : "NOT SCANNED", detail: hasScan ? (report.totalFindings ? "Current scan" : emptyFindingDetail) : "Run the first scan", icon: "◇", risk: result?.overall_risk || "none" },
+    { label: "Raw Risk", value: hasScan ? formatRiskLabel(result.overall_risk) : "NOT SCANNED", detail: hasScan ? "Original scanner severity" : "Run the first scan", icon: "◇", risk: result?.overall_risk || "none" },
     { label: "Projects", value: projects.length, detail: "In this workspace", icon: "▣" },
-    { label: "Findings", value: hasScan ? report.totalFindings : "N/A", detail: hasScan ? (report.totalFindings ? "Review prompts found" : emptyFindingDetail) : "Project has not been scanned", icon: "⌕" },
-    { label: "Highest Severity", value: hasScan ? formatRiskLabel(highestSeverity) : "N/A", detail: hasScan ? (highestSeverity === "none" ? emptyFindingDetail : "Highest finding level") : "Project has not been scanned", icon: "△", risk: hasScan ? highestSeverity : "none" },
+    { label: "Findings", value: hasScan ? report.totalFindings : "N/A", detail: hasScan ? `${reviewSummary.unreviewedFindingCount} unresolved · ${reviewSummary.reviewedFindingCount} reviewed` : "Project has not been scanned", icon: "⌕" },
+    { label: "Unreviewed Risk", value: hasScan ? formatRiskLabel(reviewSummary.highestUnreviewedSeverity) : "N/A", detail: hasScan ? "Highest unresolved severity" : "Project has not been scanned", icon: "△", risk: hasScan ? reviewSummary.highestUnreviewedSeverity : "none" },
     { label: "Last Scan", value: formatDate(result?.scan_date), detail: result ? coverageLabel(completeness) : "Never scanned", icon: "◷" },
     { label: "Changed Since Last Scan", value: hasScan ? (comparison?.riskChange || "No previous scan") : "NOT SCANNED", detail: hasScan ? (comparison?.findingDelta || "Baseline not established") : "Run the first scan", icon: "▤" },
     { label: "Scan Coverage", value: hasScan ? coverageLabel(completeness) : "NOT SCANNED", detail: hasScan ? coverageDetail(completeness) : "Run the first scan", icon: "?", risk: hasScan && !completeness.complete ? "medium" : "none" },
@@ -1246,6 +1307,8 @@ function OverallRiskPanel({ report, result, trustProfile }) {
   const coverageUnknown = !report.completeness.known;
   const reasons = buildRiskReasons(report, risk);
   const metrics = [
+    ["Unresolved findings", report.reviewSummary.unreviewedFindingCount],
+    ["Reviewed findings", report.reviewSummary.reviewedFindingCount],
     ["Reviewed files", report.reviewedFileCount],
     ["Ignored files", report.ignoredFileCount],
     ["Manifests", report.manifests.length],
@@ -1266,6 +1329,7 @@ function OverallRiskPanel({ report, result, trustProfile }) {
           <small>Findings</small>
         </div>
         <div className="risk-reasons">
+          <p className="review-risk-summary"><strong>Raw risk:</strong> {formatRiskLabel(risk)} · <strong>Highest unreviewed severity:</strong> {formatRiskLabel(report.reviewSummary.highestUnreviewedSeverity)}</p>
           <p>{riskSummaryText(report, risk)}</p>
           <div className="risk-metrics">
             {metrics.map(([label, value]) => (
@@ -1441,7 +1505,7 @@ function TrustProfilePanel({ profile, message, onSave }) {
   );
 }
 
-function ScanReport({ result, report, comparison, trustContext, viewMode, isScanning, onRunScan, open, onOpenChange }) {
+function ScanReport({ result, report, comparison, trustContext, viewMode, isScanning, onRunScan, onReviewFinding, onReopenFinding, findingReviewState, open, onOpenChange }) {
   return (
     <details className="panel section-toggle" id="reports" open={open} onToggle={(event) => onOpenChange(event.currentTarget.open)}>
       <summary className="section-summary">
@@ -1458,7 +1522,7 @@ function ScanReport({ result, report, comparison, trustContext, viewMode, isScan
         <>
           <ScanSummary report={report} risk={result.overall_risk} />
           <ScanCompletenessSummary completeness={report.completeness} viewMode={viewMode} isScanning={isScanning} onRunScan={onRunScan} />
-          <DependencyTrustPanel trust={report.dependencyTrust} findings={report.dependencyFindings} trustContext={trustContext} />
+          <DependencyTrustPanel trust={report.dependencyTrust} findings={report.dependencyFindings} trustContext={trustContext} onReviewFinding={onReviewFinding} onReopenFinding={onReopenFinding} findingReviewState={findingReviewState} />
           <div className="scan-view-label">
             {viewMode === "history" ? `Viewing history scan from ${formatDate(result.scan_date)}` : `Viewing latest scan from ${formatDate(result.scan_date)}`}
           </div>
@@ -1475,11 +1539,11 @@ function ScanReport({ result, report, comparison, trustContext, viewMode, isScan
       {result ? (
         <div className="scan-section-grid">
           <PathSection title="Manifests" items={report.manifests} emptyText="No manifests recorded for this scan." reviewKind="manifest" guidance={SCAN_GUIDANCE.manifests} />
-          <FindingPathSection title="Lockfiles" items={report.lockfiles} findings={report.lockfileFindings} emptyText="No lockfiles recorded for this scan." guidance={SCAN_GUIDANCE.lockfiles} />
-          <LifecycleSection items={report.lifecycleScripts} findings={report.lifecycleFindings} />
-          <FindingSection title="Secret Findings" findings={report.secretFindings} emptyText="No secret-looking paths recorded for this scan." guidance={SCAN_GUIDANCE.secretFiles} />
-          <FindingSection title="Executable Files" findings={report.executableFindings} emptyText="No executable files recorded for this scan." />
-          <MetadataSection zone={report.zone} findings={report.metadataFindings} />
+          <FindingPathSection title="Lockfiles" items={report.lockfiles} findings={report.lockfileFindings} emptyText="No lockfiles recorded for this scan." guidance={SCAN_GUIDANCE.lockfiles} onReviewFinding={onReviewFinding} onReopenFinding={onReopenFinding} findingReviewState={findingReviewState} />
+          <LifecycleSection items={report.lifecycleScripts} findings={report.lifecycleFindings} onReviewFinding={onReviewFinding} onReopenFinding={onReopenFinding} findingReviewState={findingReviewState} />
+          <FindingSection title="Secret Findings" findings={report.secretFindings} emptyText="No secret-looking paths recorded for this scan." guidance={SCAN_GUIDANCE.secretFiles} onReviewFinding={onReviewFinding} onReopenFinding={onReopenFinding} findingReviewState={findingReviewState} />
+          <FindingSection title="Executable Files" findings={report.executableFindings} emptyText="No executable files recorded for this scan." onReviewFinding={onReviewFinding} onReopenFinding={onReopenFinding} findingReviewState={findingReviewState} />
+          <MetadataSection zone={report.zone} findings={report.metadataFindings} onReviewFinding={onReviewFinding} onReopenFinding={onReopenFinding} findingReviewState={findingReviewState} />
         </div>
       ) : null}
       {result ? <p className="review-note">Review high severity items first, then lifecycle scripts and files that launch processes or fetch remote content.</p> : null}
@@ -1507,12 +1571,20 @@ function ScanSummary({ report, risk }) {
   return (
     <div className="scan-summary">
       <div>
-        <span className="summary-label">Recorded risk</span>
+        <span className="summary-label">Raw risk</span>
         <strong className={`risk risk-${risk || "none"}`}>{risk === "none" ? "No recorded risk" : risk}</strong>
+      </div>
+      <div>
+        <span className="summary-label">Unreviewed risk</span>
+        <strong className={`risk risk-${report.reviewSummary.highestUnreviewedSeverity}`}>{report.reviewSummary.highestUnreviewedSeverity}</strong>
       </div>
       <div>
         <span className="summary-label">Findings</span>
         <strong>{report.totalFindings}</strong>
+      </div>
+      <div>
+        <span className="summary-label">Unresolved / reviewed</span>
+        <strong>{report.reviewSummary.unreviewedFindingCount} / {report.reviewSummary.reviewedFindingCount}</strong>
       </div>
       <div>
         <span className="summary-label">Reviewed files</span>
@@ -1567,7 +1639,7 @@ function ScanCompletenessSummary({ completeness, viewMode, isScanning, onRunScan
   );
 }
 
-function DependencyTrustPanel({ trust, findings, trustContext, compact = false }) {
+function DependencyTrustPanel({ trust, findings, trustContext, compact = false, onReviewFinding, onReopenFinding, findingReviewState = {} }) {
   const directEntries = trust.entries.filter((entry) => entry.direct);
   const visibleFindings = findings.slice(0, 50);
   const noSupportedMetadata = dependencyTrustHasNoSupportedMetadata(trust);
@@ -1647,7 +1719,7 @@ function DependencyTrustPanel({ trust, findings, trustContext, compact = false }
           </details>
           <details className="dependency-details">
             <summary>Dependency findings ({findings.length})</summary>
-            {visibleFindings.map((finding, index) => <FindingItem finding={finding} key={findingKey(finding, index)} />)}
+            {visibleFindings.map((finding, index) => <FindingItem finding={finding} key={findingKey(finding, index)} onReviewFinding={onReviewFinding} onReopenFinding={onReopenFinding} requestState={findingReviewState[finding.fingerprint]} />)}
             {!findings.length ? <p className="muted">No dependency findings recorded.</p> : null}
             {findings.length > visibleFindings.length ? <p className="muted">{findings.length - visibleFindings.length} additional dependency findings are summarized in the counts.</p> : null}
           </details>
@@ -1705,18 +1777,18 @@ function PathSection({ title, items, emptyText, reviewKind, guidance }) {
   );
 }
 
-function FindingPathSection({ title, items, findings, emptyText, guidance }) {
+function FindingPathSection({ title, items, findings, emptyText, guidance, onReviewFinding, onReopenFinding, findingReviewState = {} }) {
   const count = uniquePaths([...items, ...findings.map((finding) => finding.path)]).length;
 
   return (
     <ScanSection title={title} count={count} findings={findings} emptyText={emptyText} guidance={guidance}>
       {items.length > 0 ? <PathList items={items} /> : null}
-      {findings.map((finding, index) => <FindingItem finding={finding} key={findingKey(finding, index)} />)}
+      {findings.map((finding, index) => <FindingItem finding={finding} key={findingKey(finding, index)} onReviewFinding={onReviewFinding} onReopenFinding={onReopenFinding} requestState={findingReviewState[finding.fingerprint]} />)}
     </ScanSection>
   );
 }
 
-function LifecycleSection({ items, findings }) {
+function LifecycleSection({ items, findings, onReviewFinding, onReopenFinding, findingReviewState = {} }) {
   return (
     <ScanSection title="Lifecycle Scripts" count={items.length} findings={findings} emptyText="No package lifecycle scripts recorded for this scan." guidance={SCAN_GUIDANCE.lifecycleScripts}>
       {items.length > 0 ? (
@@ -1729,15 +1801,15 @@ function LifecycleSection({ items, findings }) {
           ))}
         </ul>
       ) : null}
-      {findings.map((finding, index) => <FindingItem finding={finding} key={findingKey(finding, index)} />)}
+      {findings.map((finding, index) => <FindingItem finding={finding} key={findingKey(finding, index)} onReviewFinding={onReviewFinding} onReopenFinding={onReopenFinding} requestState={findingReviewState[finding.fingerprint]} />)}
     </ScanSection>
   );
 }
 
-function FindingSection({ title, findings, emptyText, guidance }) {
+function FindingSection({ title, findings, emptyText, guidance, onReviewFinding, onReopenFinding, findingReviewState = {} }) {
   return (
     <ScanSection title={title} count={findings.length} findings={findings} emptyText={emptyText} guidance={guidance}>
-      {findings.map((finding, index) => <FindingItem finding={finding} key={findingKey(finding, index)} />)}
+      {findings.map((finding, index) => <FindingItem finding={finding} key={findingKey(finding, index)} onReviewFinding={onReviewFinding} onReopenFinding={onReopenFinding} requestState={findingReviewState[finding.fingerprint]} />)}
     </ScanSection>
   );
 }
@@ -1752,14 +1824,14 @@ function PathList({ items }) {
   );
 }
 
-function MetadataSection({ zone, findings }) {
+function MetadataSection({ zone, findings, onReviewFinding, onReopenFinding, findingReviewState = {} }) {
   return (
     <ScanSection title="Zone/Metadata Findings" count={findings.length} findings={findings} emptyText="No additional metadata findings." guidance={SCAN_GUIDANCE.zone}>
       <div className="metadata-row">
         <span>Zone</span>
         <strong>{zone || "Unknown"}</strong>
       </div>
-      {findings.map((finding, index) => <FindingItem finding={finding} key={findingKey(finding, index)} />)}
+      {findings.map((finding, index) => <FindingItem finding={finding} key={findingKey(finding, index)} onReviewFinding={onReviewFinding} onReopenFinding={onReopenFinding} requestState={findingReviewState[finding.fingerprint]} />)}
     </ScanSection>
   );
 }
@@ -1810,15 +1882,26 @@ function GuidanceBlock({ guidance }) {
   );
 }
 
-function FindingItem({ finding }) {
+function FindingItem({ finding, onReviewFinding, onReopenFinding, requestState = {} }) {
   const detail = normalizeFinding(finding);
   const rawExplanation = finding.explanation && finding.explanation !== detail.why ? finding.explanation : "";
+  const [editingReview, setEditingReview] = useState(false);
+  const [reviewStatus, setReviewStatus] = useState(finding.review?.status || "expected");
+  const [reviewNote, setReviewNote] = useState(finding.review?.note || "");
+  const reviewable = Boolean(finding.fingerprint && onReviewFinding && onReopenFinding);
+
+  useEffect(() => {
+    setReviewStatus(finding.review?.status || "expected");
+    setReviewNote(finding.review?.note || "");
+    if (finding.review) setEditingReview(false);
+  }, [finding.fingerprint, finding.review?.status, finding.review?.note]);
 
   return (
     <div className="finding">
       <div className="finding-heading">
         <strong>{detail.title}</strong>
         <span className={`risk risk-${detail.severity}`}>{detail.severity}</span>
+        {reviewable ? <span className={`finding-review-status ${finding.review ? "reviewed" : "unreviewed"}`}>{findingReviewLabel(finding.review)}</span> : null}
         <span className="finding-category">{detail.category}</span>
         <code>{detail.path}</code>
       </div>
@@ -1826,6 +1909,43 @@ function FindingItem({ finding }) {
         <p><strong>Why:</strong> {detail.why}</p>
         <p><strong>Action:</strong> {detail.action}</p>
         {rawExplanation ? <p><strong>Raw detail:</strong> {rawExplanation}</p> : null}
+        {finding.review?.note ? <p className="finding-review-note"><strong>Review reason:</strong> {finding.review.note}</p> : null}
+        {reviewable ? (
+          <div className="finding-review-controls">
+            {!editingReview ? (
+              <div className="finding-review-actions">
+                <button type="button" className="history-view-button" onClick={() => setEditingReview(true)} disabled={requestState.saving}>
+                  {finding.review ? "Edit review" : "Mark reviewed"}
+                </button>
+                {finding.review ? <button type="button" className="history-view-button" onClick={() => onReopenFinding(finding)} disabled={requestState.saving}>{requestState.saving ? "Saving..." : "Reopen"}</button> : null}
+              </div>
+            ) : (
+              <form className="finding-review-form" onSubmit={(event) => {
+                event.preventDefault();
+                const controls = event.currentTarget.elements;
+                onReviewFinding(finding, controls.reviewStatus.value, controls.reviewNote.value);
+              }}>
+                <label>
+                  Review status
+                  <select name="reviewStatus" value={reviewStatus} onChange={(event) => setReviewStatus(event.target.value)} disabled={requestState.saving}>
+                    <option value="expected">Reviewed as expected</option>
+                    <option value="reviewed">Reviewed</option>
+                  </select>
+                </label>
+                <label>
+                  Optional reason
+                  <textarea name="reviewNote" value={reviewNote} onChange={(event) => setReviewNote(event.target.value)} maxLength="1000" rows="2" placeholder="Why is this exact finding expected?" disabled={requestState.saving} />
+                </label>
+                <div className="finding-review-actions">
+                  <button type="submit" disabled={requestState.saving}>{requestState.saving ? "Saving..." : "Save review"}</button>
+                  <button type="button" className="history-view-button" onClick={() => setEditingReview(false)} disabled={requestState.saving}>Cancel</button>
+                </div>
+              </form>
+            )}
+            {requestState.error ? <p className="finding-review-message error">{requestState.error}</p> : null}
+            {requestState.success ? <p className="finding-review-message success">{requestState.success}</p> : null}
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -1986,6 +2106,7 @@ function History({ scans, selectedScanId, onSelectScan, open, onOpenChange }) {
           const riskChanged = previousScan && previousScan.overall_risk !== scan.overall_risk;
           const selected = selectedScanId === scan.id;
           const completeness = normalizeScanCompleteness(scan);
+          const reviewSummary = findingReviewSummary(scan);
           return (
           <div className={`history-row ${selected ? "selected-history-row" : ""}`} key={scan.id}>
             <div>
@@ -1997,6 +2118,8 @@ function History({ scans, selectedScanId, onSelectScan, open, onOpenChange }) {
               {scan.overall_risk !== "none" ? <span>{findingCountLabel(scan.findingCount ?? scan.findings.length)}</span> : null}
               <span>{scan.reviewedFileCount ?? 0} reviewed</span>
               <span>{scan.ignoredFileCount ?? 0} ignored</span>
+              <span>{reviewSummary.unreviewedFindingCount} unresolved</span>
+              <span>{reviewSummary.reviewedFindingCount} finding reviews</span>
               <span>{projectCoverageText(completeness)}</span>
             </div>
             <button type="button" className="history-view-button" onClick={() => onSelectScan(selected ? null : scan.id)}>
@@ -2124,6 +2247,7 @@ function buildScanReport(result) {
     metadataFindings,
     dependencyFindings,
     dependencyTrust: normalizeDependencyTrust(result?.dependencyTrust),
+    reviewSummary: findingReviewSummary(result),
     ignoredFiles,
     zone: result?.zone || "Unknown",
     completeness: normalizeScanCompleteness(result),

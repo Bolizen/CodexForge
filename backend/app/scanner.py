@@ -351,6 +351,7 @@ def _inspect_file_content(
             "package-lifecycle-script",
             "high",
             f"package.json defines a '{script_name}' lifecycle script. Review it before installing dependencies.",
+            script=script_name,
         ))
     return findings, lifecycle_scripts, None
 
@@ -361,7 +362,13 @@ def _scan_text_patterns(text: str, relative_path: str) -> list[dict[str, Any]]:
     for pattern, (severity, explanation) in PATTERNS.items():
         needle = pattern.lower()
         if needle in lower_text:
-            findings.append(_finding(relative_path, "suspicious-text-pattern", severity, f"{explanation} Pattern: {pattern}"))
+            findings.append(_finding(
+                relative_path,
+                "suspicious-text-pattern",
+                severity,
+                f"{explanation} Pattern: {pattern}",
+                pattern=pattern,
+            ))
     return findings
 
 

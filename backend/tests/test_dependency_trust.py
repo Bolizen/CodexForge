@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app import database, dependency_trust, main, scanner
+from app.finding_reviews import finding_fingerprint
 from app.scanner import scan_project
 from app.schemas import ProjectPathRequest
 
@@ -176,10 +177,18 @@ class DependencyTrustScannerTests(unittest.TestCase):
         second = scan_project(self.project, previous_dependency_trust=first["dependencyTrust"])
         changed = next(finding for finding in second["findings"] if finding["type"] == "dependency-integrity-changed")
         self.assertEqual(changed["severity"], "high")
+        self.assertEqual(changed["resolvedVersion"], "1.0.0")
+        self.assertEqual(changed["metadata"]["integrity"], "sha512-BBBB")
         self.assertEqual(second["dependencyTrust"]["comparison"]["baselineStatus"], "available")
         change_types = {change["changeType"] for change in second["dependencyTrust"]["comparison"]["changes"]}
         self.assertIn("locked-added", change_types)
         self.assertIn("locked-removed", change_types)
+
+        lock["packages"]["node_modules/alpha"]["integrity"] = "sha512-DDDD"
+        self.write_json("package-lock.json", lock)
+        third = scan_project(self.project, previous_dependency_trust=second["dependencyTrust"])
+        next_changed = next(finding for finding in third["findings"] if finding["type"] == "dependency-integrity-changed")
+        self.assertNotEqual(finding_fingerprint(changed), finding_fingerprint(next_changed))
 
     def test_python_requirements_sources_hashes_includes_and_cycles(self) -> None:
         requirements = self.project / "requirements"

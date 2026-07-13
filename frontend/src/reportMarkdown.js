@@ -78,11 +78,13 @@ const FINDING_STANDARD_FIELDS = new Set([
   "action",
   "category",
   "explanation",
+  "fingerprint",
   "file_path",
   "finding_type",
   "message",
   "path",
   "recommended_action",
+  "review",
   "severity",
   "title",
   "type",
@@ -142,20 +144,29 @@ export function normalizeFinding(finding = {}) {
 export function buildScanReportMarkdown(result, report, comparison, trustContext) {
   const findings = Array.isArray(result?.findings) ? [...result.findings].sort(compareFindings) : [];
   const completeness = normalizeScanCompleteness(result);
+  const reviewSummary = findingReviewSummary(result);
   const summaryLines = ["## Summary"];
   appendOptionalLine(summaryLines, "Project", inlineCode(result?.project_path));
   appendOptionalLine(summaryLines, "Scan date", formatReportDate(result?.scan_date));
   summaryLines.push(`Findings: ${findings.length}`);
   summaryLines.push(`Reviewed files: ${numberOrZero(report?.reviewedFileCount)}`);
   summaryLines.push(`Ignored files: ${numberOrZero(report?.ignoredFileCount)}`);
+  summaryLines.push(`Reviewed findings: ${reviewSummary.reviewedFindingCount}`);
+  summaryLines.push(`Unresolved findings: ${reviewSummary.unreviewedFindingCount}`);
 
   return [
     "# Scan Report",
     "",
     ...summaryLines,
     "",
-    "## Risk score",
+    "## Raw risk",
     escapeMarkdownText(formatRiskLabel(result?.overall_risk)),
+    "",
+    "## Finding review status",
+    `- Raw findings: ${reviewSummary.rawFindingCount}`,
+    `- Reviewed findings: ${reviewSummary.reviewedFindingCount}`,
+    `- Unresolved findings: ${reviewSummary.unreviewedFindingCount}`,
+    `- Highest unreviewed severity: ${escapeMarkdownText(reviewSummary.highestUnreviewedSeverity.toUpperCase())}`,
     "",
     "## Scan completeness",
     formatScanCompleteness(completeness),
@@ -329,6 +340,8 @@ function formatFindings(findings) {
       appendOptionalListItem(lines, "Message", escapeMarkdownText(message));
     }
     appendOptionalListItem(lines, "Recommended action", escapeMarkdownText(action));
+    appendOptionalListItem(lines, "Review status", escapeMarkdownText(findingReviewLabel(finding.review)));
+    if (finding.review?.note) appendOptionalListItem(lines, "Review reason", escapeMarkdownText(finding.review.note));
 
     const metadata = findingMetadata(finding);
     if (metadata.length) {
@@ -563,3 +576,4 @@ import {
   dependencyTrustHasNoSupportedMetadata,
   normalizeDependencyTrust,
 } from "./dependencyTrust.js";
+import { findingReviewLabel, findingReviewSummary } from "./findingReviews.js";

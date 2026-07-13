@@ -58,7 +58,8 @@ test("exports every current and future finding with complete detailed evidence",
 
   for (const heading of [
     "Summary",
-    "Risk score",
+    "Raw risk",
+    "Finding review status",
     "Manifests",
     "Lockfiles",
     "Lifecycle scripts",
@@ -113,6 +114,59 @@ test("unknown findings with missing optional fields remain visible without empty
   assert.match(markdown, /- Details: `\{"count":0,"enabled":false,"tags":\["one",0,false\]\}`/);
   assert.doesNotMatch(markdown, /undefined|null/);
   assert.doesNotMatch(markdown, /\[object Object\]/);
+});
+
+test("review status preserves raw evidence and separates unresolved risk", () => {
+  const reviewed = {
+    ...finding("suspicious-text-pattern", "tests/fixture.py", "Expected eval fixture.", { pattern: "eval(" }),
+    fingerprint: `cf1_${"a".repeat(64)}`,
+    review: {
+      status: "expected",
+      note: "Regression fixture for the scanner.",
+      created_at: "2026-07-12T10:00:00Z",
+      updated_at: "2026-07-12T10:00:00Z",
+    },
+  };
+  const unresolved = {
+    ...finding("secret-looking-file", ".env.example", "Review this filename."),
+    severity: "low",
+    fingerprint: `cf1_${"b".repeat(64)}`,
+    review: null,
+  };
+  const markdown = buildScanReportMarkdown(
+    scanResult([reviewed, unresolved]),
+    reportFixture({ totalFindings: 2 }),
+    null,
+    { configured: false },
+  );
+
+  assert.match(markdown, /^## Raw risk\nHIGH$/m);
+  assert.match(markdown, /- Raw findings: 2/);
+  assert.match(markdown, /- Reviewed findings: 1/);
+  assert.match(markdown, /- Unresolved findings: 1/);
+  assert.match(markdown, /- Highest unreviewed severity: LOW/);
+  assert.match(markdown, /- Review status: Reviewed as expected/);
+  assert.match(markdown, /- Review reason: Regression fixture for the scanner\./);
+  assert.match(markdown, /Expected eval fixture\./);
+  assert.equal(markdown.match(/Expected eval fixture\./g)?.length, 1);
+  assert.match(markdown, /- Review status: Unreviewed/);
+  assert.doesNotMatch(markdown, /cf1_[a-f0-9]{64}|created at|updated at/i);
+});
+
+test("review reasons cannot inject HTML or break Markdown structure", () => {
+  const result = scanResult([{
+    ...finding("suspicious-text-pattern", "tests/fixture.py", "Fixture evidence.", { pattern: "eval(" }),
+    fingerprint: `cf1_${"c".repeat(64)}`,
+    review: {
+      status: "expected",
+      note: "Expected fixture.\n<script>alert('x')</script> [unsafe](https://example.invalid)",
+    },
+  }]);
+  const markdown = buildScanReportMarkdown(result, reportFixture({ totalFindings: 1 }), null, { configured: false });
+
+  assert.ok(markdown.includes("- Review reason: Expected fixture. \\<script\\>alert('x')\\</script\\> \\[unsafe\\](https://example.invalid)"));
+  assert.doesNotMatch(markdown, /<script>|\[unsafe\]\(https:\/\/example\.invalid\)/);
+  assert.equal(markdown.match(/^### Finding \d+:/gm)?.length, 1);
 });
 
 test("finding order and Markdown escaping are deterministic", () => {

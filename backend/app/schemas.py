@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -51,3 +53,13 @@ class TrustProfileRequest(ProjectPathRequest):
     ignoredPaths: list[str] = Field(default_factory=list)
     riskTolerance: str = Field(default="normal", max_length=20)
     notes: str = Field(default="", max_length=4000)
+
+
+class FindingReviewRequest(ProjectPathRequest):
+    fingerprint: str = Field(min_length=68, max_length=68)
+    status: Literal["reviewed", "expected"]
+    note: str = Field(default="", max_length=1000)
+
+
+class FindingReviewDelete(ProjectPathRequest):
+    fingerprint: str = Field(min_length=68, max_length=68)

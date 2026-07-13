@@ -1604,7 +1604,13 @@ def _change_finding(finding_type: str, severity: str, entry: dict[str, Any], exp
         "ecosystem": entry.get("ecosystem", ""),
         "package": entry.get("name", ""),
         "dependencyGroup": entry.get("group", ""),
+        "requestedSpecification": entry.get("requestedSpecification", ""),
+        "resolvedVersion": entry.get("lockedVersion", ""),
+        "sourceType": entry.get("sourceType", ""),
+        "sourceIdentifier": entry.get("sourceIdentifier", ""),
     }
+    if finding_type == "dependency-integrity-changed" and entry.get("integrity"):
+        finding["metadata"] = {"integrity": _safe_text(entry["integrity"], 300)}
     if entry.get("manifestPath") or entry.get("lockfilePath"):
         finding["path"] = entry.get("manifestPath") or entry.get("lockfilePath")
     return _compact(finding)

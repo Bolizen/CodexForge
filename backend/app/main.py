@@ -22,9 +22,10 @@ from .database import (
     set_setting,
 )
 from .dependency_trust import SCHEMA_VERSION as DEPENDENCY_TRUST_SCHEMA_VERSION
+from .finding_reviews import enrich_scan, finding_fingerprint, valid_fingerprint
 from .safety import configured_root, ensure_inside_root, ensure_project_directory, existing_workspace_root, has_multiple_hardlinks, sanitize_folder_name
 from .scanner import scan_project
-from .schemas import AgentPreviewRequest, NoteCreate, ProjectCreate, ProjectMetadataUpdate, ProjectPathRequest, ProjectRegister, ProjectRootUpdate, TrustProfileRequest
+from .schemas import AgentPreviewRequest, FindingReviewDelete, FindingReviewRequest, NoteCreate, ProjectCreate, ProjectMetadataUpdate, ProjectPathRequest, ProjectRegister, ProjectRootUpdate, TrustProfileRequest
 
 
 app = FastAPI(title="CodexForge API")
@@ -203,6 +204,7 @@ def unregister_project(payload: ProjectPathRequest) -> dict[str, object]:
         connection.execute("DELETE FROM scans WHERE project_path = ?", (path,))
         connection.execute("DELETE FROM notes WHERE project_path = ?", (path,))
         connection.execute("DELETE FROM project_trust_profiles WHERE project_path = ?", (path,))
+        connection.execute("DELETE FROM finding_reviews WHERE project_path = ?", (path,))
         connection.execute("DELETE FROM projects WHERE path = ?", (path,))
     return {
         "unregistered": True,
@@ -317,7 +319,7 @@ def run_scan(payload: ProjectPathRequest) -> dict[str, object]:
                 json.dumps(scan_metadata),
             ),
         )
-    return {
+    response = {
         "id": cursor.lastrowid,
         "project_path": str(project),
         "scan_date": now,
@@ -337,6 +339,7 @@ def run_scan(payload: ProjectPathRequest) -> dict[str, object]:
         "scanCompleteness": result["scanCompleteness"],
         "dependencyTrust": result.get("dependencyTrust"),
     }
+    return enrich_scan(response, _finding_reviews(str(project)))
 
 
 @app.get("/api/scans/history")
@@ -347,7 +350,50 @@ def scan_history(project_path: str = Query(min_length=1, max_length=1000)) -> di
             "SELECT * FROM scans WHERE project_path = ? ORDER BY scan_date DESC LIMIT 20",
             (str(project),),
         ).fetchall()
-    return {"scans": [row_to_scan(row) for row in rows]}
+    reviews = _finding_reviews(str(project))
+    return {"scans": [enrich_scan(row_to_scan(row), reviews) for row in rows]}
+
+
+@app.get("/api/finding-reviews")
+def list_finding_reviews(project_path: str = Query(min_length=1, max_length=1000)) -> dict[str, object]:
+    project = _ensure_project(project_path)
+    return {"reviews": _finding_reviews(str(project))}
+
+
+@app.put("/api/finding-reviews")
+def update_finding_review(payload: FindingReviewRequest) -> dict[str, object]:
+    project = _ensure_project(payload.project_path)
+    fingerprint = _validated_fingerprint(payload.fingerprint)
+    if not _project_has_fingerprint(str(project), fingerprint):
+        raise HTTPException(status_code=404, detail="The exact finding is not present in this project's scan history.")
+    note = payload.note.strip()
+    now = _now()
+    with get_connection() as connection:
+        connection.execute(
+            "INSERT INTO finding_reviews (project_path, fingerprint, status, note, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(project_path, fingerprint) DO UPDATE SET "
+            "status = excluded.status, note = excluded.note, updated_at = excluded.updated_at",
+            (str(project), fingerprint, payload.status, note, now, now),
+        )
+        row = connection.execute(
+            "SELECT fingerprint, status, note, created_at, updated_at FROM finding_reviews "
+            "WHERE project_path = ? AND fingerprint = ?",
+            (str(project), fingerprint),
+        ).fetchone()
+    return {"review": dict(row)}
+
+
+@app.delete("/api/finding-reviews")
+def delete_finding_review(payload: FindingReviewDelete) -> dict[str, object]:
+    project = _ensure_project(payload.project_path)
+    fingerprint = _validated_fingerprint(payload.fingerprint)
+    with get_connection() as connection:
+        connection.execute(
+            "DELETE FROM finding_reviews WHERE project_path = ? AND fingerprint = ?",
+            (str(project), fingerprint),
+        )
+    return {"reopened": True, "fingerprint": fingerprint}
 
 
 @app.get("/api/notes")
@@ -460,6 +506,49 @@ def _agents_path(project: Path) -> Path:
     if agents_path.exists() and not agents_path.is_file():
         raise HTTPException(status_code=409, detail="AGENTS.md target exists but is not a regular file.")
     return agents_path
+
+
+def _finding_reviews(project_path: str) -> list[dict[str, object]]:
+    with get_connection() as connection:
+        rows = connection.execute(
+            "SELECT fingerprint, status, note, created_at, updated_at FROM finding_reviews "
+            "WHERE project_path = ? ORDER BY updated_at DESC, fingerprint",
+            (project_path,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _validated_fingerprint(value: str) -> str:
+    fingerprint = str(value or "").strip().lower()
+    if not valid_fingerprint(fingerprint):
+        raise HTTPException(status_code=422, detail="Finding fingerprint is invalid.")
+    return fingerprint
+
+
+def _project_has_fingerprint(project_path: str, fingerprint: str) -> bool:
+    with get_connection() as connection:
+        rows = connection.execute(
+            "SELECT findings_json FROM scans WHERE project_path = ? ORDER BY scan_date DESC, id DESC",
+            (project_path,),
+        )
+        try:
+            for row in rows:
+                try:
+                    findings = json.loads(row["findings_json"])
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                if not isinstance(findings, list):
+                    continue
+                for finding in findings:
+                    if isinstance(finding, dict):
+                        try:
+                            if finding_fingerprint(finding) == fingerprint:
+                                return True
+                        except ValueError:
+                            continue
+        finally:
+            rows.close()
+    return False
 
 
 def _now() -> str:

@@ -787,6 +787,118 @@ test("same-project AGENTS previews and trust saves keep the newest response", as
   assert.equal(trustNotes.value, "Second trust save");
 });
 
+test("finding review and reopen update the real scan, history, and Markdown workflow", async () => {
+  const finding = reviewableFinding("a");
+  const current = scanWithFindings(81, [finding]);
+  const historical = { ...scanWithFindings(80, [finding]), scan_date: "2026-07-10T12:00:00Z" };
+  let copiedMarkdown = "";
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText: async (value) => { copiedMarkdown = value; } },
+  });
+
+  await renderApp();
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [current, historical] });
+  await openReports();
+  let card = findingCard("tests/eval_fixture.py");
+  assert.match(card.textContent, /Unreviewed/);
+  assert.match(card.textContent, /eval regression fixture/);
+
+  await click([...card.querySelectorAll("button")].find((button) => button.textContent.includes("Mark reviewed")));
+  const reviewTextarea = findingCard("tests/eval_fixture.py").querySelector("textarea");
+  await input(reviewTextarea, "Expected scanner regression fixture.");
+  assert.equal(reviewTextarea.value, "Expected scanner regression fixture.");
+  card = findingCard("tests/eval_fixture.py");
+  await click([...card.querySelectorAll("button")].find((button) => button.textContent.includes("Save review")));
+  const save = await fetchHarness.next("/api/finding-reviews", { method: "PUT" });
+  assert.deepEqual(save.body, {
+    project_path: PROJECT_A_PATH,
+    fingerprint: finding.fingerprint,
+    status: "expected",
+    note: "Expected scanner regression fixture.",
+  });
+  await respond(save, { review: findingReview(finding.fingerprint) });
+
+  card = findingCard("tests/eval_fixture.py");
+  assert.match(card.textContent, /Reviewed as expected/);
+  assert.match(card.textContent, /Expected scanner regression fixture/);
+  assert.match(document.body.textContent, /Raw risk\s*high/i);
+  assert.match(document.body.textContent, /Unreviewed risk\s*none/i);
+  assert.match(card.textContent, /eval regression fixture/);
+
+  const historicalRow = [...document.querySelectorAll(".history-row")]
+    .find((row) => row.textContent.includes("Jul 10"));
+  assert.ok(historicalRow, "Expected historical scan row");
+  await click(historicalRow.querySelector(".history-view-button"));
+  assert.match(findingCard("tests/eval_fixture.py").textContent, /Reviewed as expected/);
+  await click(buttonWithText("Copy Markdown"));
+  assert.match(copiedMarkdown, /## Raw risk\nHIGH/);
+  assert.match(copiedMarkdown, /- Reviewed findings: 1/);
+  assert.match(copiedMarkdown, /- Unresolved findings: 0/);
+  assert.match(copiedMarkdown, /- Review reason: Expected scanner regression fixture\./);
+  assert.match(copiedMarkdown, /eval regression fixture/);
+
+  card = findingCard("tests/eval_fixture.py");
+  await click([...card.querySelectorAll("button")].find((button) => button.textContent.includes("Reopen")));
+  const reopen = await fetchHarness.next("/api/finding-reviews", { method: "DELETE" });
+  assert.equal(reopen.body.fingerprint, finding.fingerprint);
+  await respond(reopen, { reopened: true, fingerprint: finding.fingerprint });
+  assert.match(findingCard("tests/eval_fixture.py").textContent, /Unreviewed/);
+  assert.doesNotMatch(findingCard("tests/eval_fixture.py").textContent, /Expected scanner regression fixture/);
+});
+
+test("failed and stale finding-review saves remain scoped to the exact project finding", async () => {
+  const findingA = reviewableFinding("c");
+  await renderApp();
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [scanWithFindings(82, [findingA])] });
+  await openReports();
+  let card = findingCard("tests/eval_fixture.py");
+  await click([...card.querySelectorAll("button")].find((button) => button.textContent.includes("Mark reviewed")));
+  await click([...card.querySelectorAll("button")].find((button) => button.textContent.includes("Save review")));
+  const failed = await fetchHarness.next("/api/finding-reviews", { method: "PUT" });
+  await respond(failed, { detail: "Review could not be saved." }, 500);
+  card = findingCard("tests/eval_fixture.py");
+  assert.match(card.textContent, /Review could not be saved/);
+  assert.match(card.textContent, /Unreviewed/);
+
+  await click([...card.querySelectorAll("button")].find((button) => button.textContent.includes("Save review")));
+  const obsolete = await fetchHarness.next("/api/finding-reviews", { method: "PUT" });
+  await selectProject("Project B");
+  const findingB = { ...reviewableFinding("d"), path: "src/current.js", pattern: "child_process" };
+  const projectBScan = { ...scanWithFindings(83, [findingB]), project_path: PROJECT_B_PATH };
+  await resolveDetails(await takeDetailRequests(PROJECT_B_PATH), { scans: [projectBScan] });
+  await openReports();
+  await respond(obsolete, { review: findingReview(findingA.fingerprint) });
+  const currentCard = findingCard("src/current.js");
+  assert.match(currentCard.textContent, /Unreviewed/);
+  assert.doesNotMatch(currentCard.textContent, /Review saved|Review could not be saved/);
+});
+
+test("changed finding identity stays unresolved while matching history uses current reviews", async () => {
+  const oldFinding = {
+    ...reviewableFinding("e"),
+    review: findingReview(`cf1_${"e".repeat(64)}`),
+  };
+  const changedFinding = {
+    ...reviewableFinding("f"),
+    pattern: "Function(",
+    explanation: "A changed suspicious pattern was found.",
+  };
+  const current = scanWithFindings(85, [changedFinding]);
+  const historical = { ...scanWithFindings(84, [oldFinding]), scan_date: "2026-07-09T12:00:00Z" };
+  await renderApp();
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [current, historical] });
+  await openReports();
+
+  assert.match(findingCard("tests/eval_fixture.py").textContent, /Unreviewed/);
+  assert.match(document.body.textContent, /Unreviewed risk\s*high/i);
+  const historicalRow = [...document.querySelectorAll(".history-row")]
+    .find((row) => row.textContent.includes("Jul 9"));
+  assert.ok(historicalRow, "Expected matching historical scan");
+  await click(historicalRow.querySelector(".history-view-button"));
+  assert.match(findingCard("tests/eval_fixture.py").textContent, /Reviewed as expected/);
+});
+
 async function renderApp(projects = [PROJECT_A, PROJECT_B], healthError = null) {
   await act(async () => {
     root.render(React.createElement(App));
@@ -1162,6 +1274,49 @@ function scan(id, risk, date) {
     reviewedFiles: [],
     zone: "Source",
   };
+}
+
+function reviewableFinding(hex, overrides = {}) {
+  return {
+    fingerprint: `cf1_${hex.repeat(64)}`,
+    review: null,
+    type: "suspicious-text-pattern",
+    severity: "high",
+    path: "tests/eval_fixture.py",
+    pattern: "eval(",
+    explanation: "Expected eval regression fixture. Pattern: eval(",
+    action: "Review the exact test fixture before accepting it.",
+    ...overrides,
+  };
+}
+
+function findingReview(fingerprint) {
+  return {
+    fingerprint,
+    status: "expected",
+    note: "Expected scanner regression fixture.",
+    created_at: "2026-07-12T10:00:00Z",
+    updated_at: "2026-07-12T10:00:00Z",
+  };
+}
+
+function scanWithFindings(id, findings) {
+  return withCompleteness({
+    ...scan(id, "high", "2026-07-12T12:00:00Z"),
+    findings,
+    findingCount: findings.length,
+    findingSummary: findings.reduce((summary, finding) => ({
+      ...summary,
+      [finding.type]: (summary[finding.type] || 0) + 1,
+    }), {}),
+  }, { complete: true });
+}
+
+function findingCard(path) {
+  const card = [...document.querySelectorAll(".finding")]
+    .find((item) => item.querySelector("code")?.textContent === path);
+  assert.ok(card, `Expected finding card for ${path}`);
+  return card;
 }
 
 function withCompleteness(value, completeness) {

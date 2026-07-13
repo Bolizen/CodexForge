@@ -978,6 +978,76 @@ pre {
   margin-top: 10px;
 }
 
+.finding-review-status {
+  align-self: start;
+  border: 1px solid #c8d3d7;
+  border-radius: 999px;
+  color: #52636a;
+  font-size: 0.72rem;
+  font-weight: 800;
+  grid-column: 1;
+  justify-self: start;
+  line-height: 1.2;
+  padding: 4px 8px;
+  text-transform: uppercase;
+}
+
+.finding-review-status.reviewed {
+  background: #eaf6ee;
+  border-color: #a9ceb5;
+  color: #236b3b;
+}
+
+.finding-review-status.unreviewed {
+  background: #f5f7f8;
+}
+
+.finding-review-controls {
+  border-top: 1px solid #e3e9eb;
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 10px;
+}
+
+.finding-review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.finding-review-form {
+  display: grid;
+  gap: 10px;
+}
+
+.finding-review-form label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.finding-review-form select,
+.finding-review-form textarea {
+  max-width: 100%;
+  min-width: 0;
+  width: 100%;
+}
+
+.finding-review-message,
+.finding-review-note,
+.review-risk-summary {
+  margin: 0;
+}
+
+.finding-review-message.error {
+  color: #9f2d26;
+}
+
+.finding-review-message.success {
+  color: #236b3b;
+}
+
 .finding-category {
   color: #627279;
   font-size: 0.82rem;
