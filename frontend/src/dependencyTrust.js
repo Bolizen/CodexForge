@@ -1,12 +1,14 @@
+import { normalizeTrustedDependencyBaseline } from "./trustedDependencyBaseline.js";
+
 export const DEPENDENCY_TRUST_SCHEMA_VERSION = 1;
 export const DEPENDENCY_ENTRY_DISPLAY_LIMIT = 50;
 export const DEPENDENCY_CHANGE_DISPLAY_LIMIT = 50;
 
 const VALID_STATUSES = new Set(["complete", "incomplete", "unsupported", "malformed"]);
 
-export function normalizeDependencyTrust(value) {
+export function normalizeDependencyTrust(value, trustedBaselineFallback) {
   if (!value || typeof value !== "object" || Array.isArray(value) || value.schemaVersion !== DEPENDENCY_TRUST_SCHEMA_VERSION) {
-    return unavailableDependencyTrust();
+    return unavailableDependencyTrust(trustedBaselineFallback);
   }
   const entries = arrayOfObjects(value.entries).map(normalizeEntry).sort(compareEntries);
   const changes = arrayOfObjects(value.comparison?.changes).map(normalizeChange).sort(compareChanges);
@@ -48,6 +50,7 @@ export function normalizeDependencyTrust(value) {
     },
     limitations,
     offlineOnly: value.offlineOnly !== false,
+    trustedBaseline: normalizeTrustedDependencyBaseline(value.trustedBaseline || trustedBaselineFallback),
   };
 }
 
@@ -90,7 +93,7 @@ export function dependencyTrustHasNoSupportedMetadata(trust) {
     && (trust.entries?.length || 0) === 0;
 }
 
-function unavailableDependencyTrust() {
+function unavailableDependencyTrust(trustedBaselineFallback) {
   return {
     available: false,
     schemaVersion: 0,
@@ -119,6 +122,7 @@ function unavailableDependencyTrust() {
     },
     limitations: [],
     offlineOnly: true,
+    trustedBaseline: normalizeTrustedDependencyBaseline(trustedBaselineFallback),
   };
 }
 

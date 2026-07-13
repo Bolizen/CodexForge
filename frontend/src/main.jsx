@@ -7,6 +7,7 @@ import {
   normalizeDependencyTrust,
 } from "./dependencyTrust.js";
 import { applyFindingReviewToScan, findingReviewLabel, findingReviewSummary } from "./findingReviews.js";
+import { shortBaselineFingerprint, trustedBaselineComparisonLabel } from "./trustedDependencyBaseline.js";
 import {
   isAbortError,
   projectListResponsePolicy,
@@ -103,6 +104,7 @@ export function App() {
   const [metadataSaving, setMetadataSaving] = useState(false);
   const [unregisteringPath, setUnregisteringPath] = useState("");
   const [findingReviewState, setFindingReviewState] = useState({});
+  const [trustedBaselineMutation, setTrustedBaselineMutation] = useState({ saving: false, error: "", success: "" });
   const [sessionStateReady, setSessionStateReady] = useState(false);
   const [toastTop, setToastTop] = useState(112);
   const topbarRef = useRef(null);
@@ -119,6 +121,7 @@ export function App() {
   const skipNextSessionWriteRef = useRef(false);
   const lastSessionWriteRef = useRef("");
   const findingReviewRequestsRef = useRef(new Map());
+  const trustedBaselineRequestRef = useRef({ id: 0, controller: null });
   if (initialSessionStateRef.current === undefined) initialSessionStateRef.current = readSessionState();
   const projectRequestsByScopeRef = useRef({
     notes: 0,
@@ -131,6 +134,7 @@ export function App() {
     agentWrite: 0,
     trustSave: 0,
     metadataSave: 0,
+    trustedBaselineMutation: 0,
   });
 
   const selectedProject = useMemo(
@@ -157,6 +161,8 @@ export function App() {
     loadChangelog();
     checkHealth();
   }, []);
+
+  useEffect(() => () => trustedBaselineRequestRef.current.controller?.abort(), []);
 
   useEffect(() => {
     if (!selectedPath) {
@@ -249,6 +255,9 @@ export function App() {
     setMetadataSaving(false);
     findingReviewRequestsRef.current.clear();
     setFindingReviewState({});
+    trustedBaselineRequestRef.current.controller?.abort();
+    trustedBaselineRequestRef.current = { id: trustedBaselineRequestRef.current.id + 1, controller: null };
+    setTrustedBaselineMutation({ saving: false, error: "", success: "" });
   }
 
   function selectProject(path, { restoring = false, force = false } = {}) {
@@ -576,16 +585,64 @@ export function App() {
       const data = await api(`/api/scans/history?project_path=${encodeURIComponent(path)}`, { signal });
       if (!scopedProjectRequestIsCurrent("scanHistory", requestId, path, generation)) return;
       setScanHistory(data.scans);
+      setScanResult((current) => current ? (data.scans.find((scan) => scan.id === current.id) || current) : current);
       const pending = pendingScanRestoreRef.current;
       if (pending?.projectPath === path) {
         pendingScanRestoreRef.current = null;
         if (data.scans.some((scan) => scan.id === pending.scanId)) setSelectedScanId(pending.scanId);
       }
+      return data.scans;
     } catch (error) {
       if (!isAbortError(error) && scopedProjectRequestIsCurrent("scanHistory", requestId, path, generation)) {
         if (pendingScanRestoreRef.current?.projectPath === path) pendingScanRestoreRef.current = null;
         setScanHistory([]);
         setMessage(error.message);
+      }
+    }
+  }
+
+  async function approveTrustedBaseline(scan, replace = false, note = "") {
+    if (!scan?.id || !scan?.dependencyTrust?.trustedBaseline?.approval?.eligible) return;
+    if (replace && !window.confirm("Replace the trusted dependency baseline? Project files and scan history will not be changed.")) return;
+    await mutateTrustedBaseline("PUT", {
+      scan_id: scan.id,
+      fingerprint: scan.dependencyTrust.trustedBaseline.approval.fingerprint,
+      note,
+      replace,
+    }, replace ? "Trusted dependency baseline replaced." : "Dependency snapshot approved as the trusted baseline.");
+  }
+
+  async function updateTrustedBaselineNote(note) {
+    await mutateTrustedBaseline("PATCH", { note }, "Trusted baseline note updated.");
+  }
+
+  async function clearTrustedBaseline() {
+    if (!window.confirm("Clear the trusted dependency baseline? Project files and scan history will not be changed.")) return;
+    await mutateTrustedBaseline("DELETE", {}, "Trusted dependency baseline cleared.");
+  }
+
+  async function mutateTrustedBaseline(method, fields, success) {
+    const projectPath = selectedPathRef.current;
+    const generation = projectGenerationRef.current;
+    if (!projectPath) return;
+    const requestId = beginScopedProjectRequest("trustedBaselineMutation");
+    trustedBaselineRequestRef.current.controller?.abort();
+    const controller = new AbortController();
+    trustedBaselineRequestRef.current = { id: requestId, controller };
+    setTrustedBaselineMutation({ saving: true, error: "", success: "" });
+    try {
+      await api("/api/trusted-dependency-baseline", {
+        method,
+        body: { project_path: projectPath, ...fields },
+        signal: controller.signal,
+      });
+      if (!scopedProjectRequestIsCurrent("trustedBaselineMutation", requestId, projectPath, generation)) return;
+      await loadScanHistory(projectPath, generation, controller.signal);
+      if (!scopedProjectRequestIsCurrent("trustedBaselineMutation", requestId, projectPath, generation)) return;
+      setTrustedBaselineMutation({ saving: false, error: "", success });
+    } catch (error) {
+      if (!isAbortError(error) && scopedProjectRequestIsCurrent("trustedBaselineMutation", requestId, projectPath, generation)) {
+        setTrustedBaselineMutation({ saving: false, error: error.message, success: "" });
       }
     }
   }
@@ -997,7 +1054,7 @@ export function App() {
               <section className="dashboard-grid">
                 <OverallRiskPanel report={displayedReport} result={displayedScan} trustProfile={trustProfile} />
                 <FindingsOverview report={displayedReport} result={displayedScan} />
-                {displayedScan ? <DependencyTrustPanel trust={displayedReport.dependencyTrust} findings={displayedReport.dependencyFindings} trustContext={displayedTrustContext} compact /> : null}
+                {displayedScan ? <DependencyTrustPanel trust={displayedReport.dependencyTrust} findings={displayedReport.dependencyFindings} trustContext={displayedTrustContext} scan={displayedScan} viewMode={scanViewMode} compact /> : null}
                 <ProjectExpectationsSummary profile={trustProfile} onEdit={() => setSelectedSection("trustProfiles")} />
                 <RecentActivity changelog={changelog} scans={scanHistory} />
               </section>
@@ -1025,6 +1082,10 @@ export function App() {
                 onReviewFinding={saveFindingReview}
                 onReopenFinding={reopenFindingReview}
                 findingReviewState={findingReviewState}
+                trustedBaselineMutation={trustedBaselineMutation}
+                onApproveTrustedBaseline={approveTrustedBaseline}
+                onUpdateTrustedBaselineNote={updateTrustedBaselineNote}
+                onClearTrustedBaseline={clearTrustedBaseline}
                 open={majorSectionsOpen.scanReport}
                 onOpenChange={(open) => setMajorSectionOpen("scanReport", open)}
               />
@@ -1505,7 +1566,7 @@ function TrustProfilePanel({ profile, message, onSave }) {
   );
 }
 
-function ScanReport({ result, report, comparison, trustContext, viewMode, isScanning, onRunScan, onReviewFinding, onReopenFinding, findingReviewState, open, onOpenChange }) {
+function ScanReport({ result, report, comparison, trustContext, viewMode, isScanning, onRunScan, onReviewFinding, onReopenFinding, findingReviewState, trustedBaselineMutation, onApproveTrustedBaseline, onUpdateTrustedBaselineNote, onClearTrustedBaseline, open, onOpenChange }) {
   return (
     <details className="panel section-toggle" id="reports" open={open} onToggle={(event) => onOpenChange(event.currentTarget.open)}>
       <summary className="section-summary">
@@ -1522,7 +1583,7 @@ function ScanReport({ result, report, comparison, trustContext, viewMode, isScan
         <>
           <ScanSummary report={report} risk={result.overall_risk} />
           <ScanCompletenessSummary completeness={report.completeness} viewMode={viewMode} isScanning={isScanning} onRunScan={onRunScan} />
-          <DependencyTrustPanel trust={report.dependencyTrust} findings={report.dependencyFindings} trustContext={trustContext} onReviewFinding={onReviewFinding} onReopenFinding={onReopenFinding} findingReviewState={findingReviewState} />
+          <DependencyTrustPanel trust={report.dependencyTrust} findings={report.dependencyFindings} trustContext={trustContext} scan={result} viewMode={viewMode} onReviewFinding={onReviewFinding} onReopenFinding={onReopenFinding} findingReviewState={findingReviewState} trustedBaselineMutation={trustedBaselineMutation} onApproveTrustedBaseline={onApproveTrustedBaseline} onUpdateTrustedBaselineNote={onUpdateTrustedBaselineNote} onClearTrustedBaseline={onClearTrustedBaseline} />
           <div className="scan-view-label">
             {viewMode === "history" ? `Viewing history scan from ${formatDate(result.scan_date)}` : `Viewing latest scan from ${formatDate(result.scan_date)}`}
           </div>
@@ -1639,7 +1700,7 @@ function ScanCompletenessSummary({ completeness, viewMode, isScanning, onRunScan
   );
 }
 
-function DependencyTrustPanel({ trust, findings, trustContext, compact = false, onReviewFinding, onReopenFinding, findingReviewState = {} }) {
+function DependencyTrustPanel({ trust, findings, trustContext, scan, viewMode = "latest", compact = false, onReviewFinding, onReopenFinding, findingReviewState = {}, trustedBaselineMutation = {}, onApproveTrustedBaseline, onUpdateTrustedBaselineNote, onClearTrustedBaseline }) {
   const directEntries = trust.entries.filter((entry) => entry.direct);
   const visibleFindings = findings.slice(0, 50);
   const noSupportedMetadata = dependencyTrustHasNoSupportedMetadata(trust);
@@ -1658,6 +1719,7 @@ function DependencyTrustPanel({ trust, findings, trustContext, compact = false, 
         <span className="dependency-status">{dependencyStatusLabel(trust)}</span>
       </div>
       <p className="muted dependency-state-description">{dependencyStatusDescription(trust)}</p>
+      <TrustedDependencyBaselinePanel baseline={trust.trustedBaseline} scan={scan} viewMode={viewMode} compact={compact} mutation={trustedBaselineMutation} onApprove={onApproveTrustedBaseline} onUpdateNote={onUpdateTrustedBaselineNote} onClear={onClearTrustedBaseline} />
       {compact ? (
         trust.available && !noSupportedMetadata ? (
           <div className="dependency-overview-counts">
@@ -1726,6 +1788,81 @@ function DependencyTrustPanel({ trust, findings, trustContext, compact = false, 
           <p className="review-note">Offline-only: CodexForge does not contact registries, score package reputation, install dependencies, inspect installed package code, or execute project code.</p>
         </>
       )}
+    </section>
+  );
+}
+
+function TrustedDependencyBaselinePanel({ baseline, scan, viewMode, compact, mutation, onApprove, onUpdateNote, onClear }) {
+  const [editingNote, setEditingNote] = useState(false);
+  const [note, setNote] = useState(baseline.note || "");
+  const comparison = baseline.comparison;
+  const canMutate = !compact && onApprove && onUpdateNote && onClear;
+
+  useEffect(() => {
+    setNote(baseline.note || "");
+    setEditingNote(false);
+  }, [scan?.project_path, scan?.id, baseline.fingerprint, baseline.note, baseline.configured]);
+
+  return (
+    <section className={`trusted-baseline trusted-baseline-${comparison.status}`}>
+      <div className="trusted-baseline-heading">
+        <div>
+          <h4>Trusted Dependency Baseline</h4>
+          <p>{baseline.configured ? "Explicit project-scoped dependency snapshot." : "No trusted baseline configured."}</p>
+        </div>
+        <span className={`dependency-status trusted-baseline-status status-${comparison.status}`}>{trustedBaselineComparisonLabel(comparison.status)}</span>
+      </div>
+      <p className="muted">{comparison.explanation || "No trusted dependency baseline is configured."}</p>
+      {baseline.configured && baseline.valid ? (
+        <div className="trusted-baseline-metadata">
+          <span>Approved {formatDate(baseline.createdAt)}</span>
+          <span>Source scan {formatDate(baseline.sourceScanDate)}</span>
+          <span>Fingerprint <code>{shortBaselineFingerprint(baseline.fingerprint)}</code></span>
+          <span>Drift {comparison.changeCount}</span>
+          <span>Highest drift {formatRiskLabel(comparison.highestSeverity)}</span>
+        </div>
+      ) : null}
+      {baseline.note ? <p className="trusted-baseline-note"><strong>Approval note:</strong> {baseline.note}</p> : null}
+      {comparison.changes.length && !compact ? (
+        <details className="dependency-details">
+          <summary>Trusted baseline drift ({comparison.changeCount})</summary>
+          <ul>{comparison.changes.slice(0, 20).map((change, index) => (
+            <li key={`${change.changeType}-${change.name || change.path}-${index}`}><strong>{change.changeType}</strong>: {change.name || change.path || "dependency input"}{change.currentValue ? ` → ${change.currentValue}` : ""}</li>
+          ))}</ul>
+          {comparison.truncated || comparison.changeCount > 20 ? <p className="muted">Additional drift is summarized in the count.</p> : null}
+        </details>
+      ) : null}
+      {viewMode === "history" ? <p className="muted">This historical evidence is unchanged. Changing the active baseline can change the comparison shown here.</p> : null}
+      {canMutate ? (
+        <div className="trusted-baseline-actions">
+          {!baseline.configured && viewMode === "latest" && baseline.approval.eligible ? (
+            <label className="trusted-baseline-approval">
+              Optional approval note
+              <textarea value={note} onInput={(event) => setNote(event.currentTarget.value)} maxLength="1000" rows="2" disabled={mutation.saving} />
+              <button type="button" onClick={() => onApprove(scan, false, note)} disabled={!baseline.approval.eligible || mutation.saving}>{mutation.saving ? "Saving..." : "Trust this dependency snapshot"}</button>
+            </label>
+          ) : null}
+          {baseline.configured ? (
+            <div className="trusted-baseline-buttons">
+              {viewMode === "latest" && baseline.approval.eligible ? <button type="button" onClick={() => onApprove(scan, true, baseline.note)} disabled={mutation.saving}>{mutation.saving ? "Saving..." : "Replace trusted baseline"}</button> : null}
+              <button type="button" className="history-view-button" onClick={() => setEditingNote((value) => !value)} disabled={mutation.saving}>Edit note</button>
+              <button type="button" className="history-view-button" onClick={onClear} disabled={mutation.saving}>Clear trusted baseline</button>
+            </div>
+          ) : null}
+          {editingNote && baseline.configured ? (
+            <form className="trusted-baseline-note-form" onSubmit={(event) => { event.preventDefault(); onUpdateNote(note); }}>
+              <label>Approval note<textarea value={note} onInput={(event) => setNote(event.currentTarget.value)} maxLength="1000" rows="2" disabled={mutation.saving} /></label>
+              <div className="trusted-baseline-buttons">
+                <button type="submit" disabled={mutation.saving}>{mutation.saving ? "Saving..." : "Save note"}</button>
+                <button type="button" className="history-view-button" onClick={() => { setNote(baseline.note || ""); setEditingNote(false); }} disabled={mutation.saving}>Cancel</button>
+              </div>
+            </form>
+          ) : null}
+          {!baseline.approval.eligible ? <p className="muted baseline-ineligible">Approval unavailable: {baseline.approval.reason || "This scan is not eligible."}</p> : null}
+          {mutation.error ? <p className="finding-review-message error">{mutation.error}</p> : null}
+          {mutation.success ? <p className="finding-review-message success">{mutation.success}</p> : null}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -2246,7 +2383,7 @@ function buildScanReport(result) {
     executableFindings,
     metadataFindings,
     dependencyFindings,
-    dependencyTrust: normalizeDependencyTrust(result?.dependencyTrust),
+    dependencyTrust: normalizeDependencyTrust(result?.dependencyTrust, result?.trustedDependencyBaseline),
     reviewSummary: findingReviewSummary(result),
     ignoredFiles,
     zone: result?.zone || "Unknown",

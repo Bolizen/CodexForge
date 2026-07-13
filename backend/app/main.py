@@ -25,7 +25,8 @@ from .dependency_trust import SCHEMA_VERSION as DEPENDENCY_TRUST_SCHEMA_VERSION
 from .finding_reviews import enrich_scan, finding_fingerprint, valid_fingerprint
 from .safety import configured_root, ensure_inside_root, ensure_project_directory, existing_workspace_root, has_multiple_hardlinks, sanitize_folder_name
 from .scanner import scan_project
-from .schemas import AgentPreviewRequest, FindingReviewDelete, FindingReviewRequest, NoteCreate, ProjectCreate, ProjectMetadataUpdate, ProjectPathRequest, ProjectRegister, ProjectRootUpdate, TrustProfileRequest
+from .schemas import AgentPreviewRequest, FindingReviewDelete, FindingReviewRequest, NoteCreate, ProjectCreate, ProjectMetadataUpdate, ProjectPathRequest, ProjectRegister, ProjectRootUpdate, TrustProfileRequest, TrustedDependencyBaselineApprove, TrustedDependencyBaselineNote
+from .trusted_dependency_baseline import BASELINE_SCHEMA_VERSION, BaselineError, approval_for_analysis, enrich_scan as enrich_trusted_baseline, public_baseline, snapshot_from_analysis, snapshot_json, valid_fingerprint as valid_baseline_fingerprint
 
 
 app = FastAPI(title="CodexForge API")
@@ -205,6 +206,7 @@ def unregister_project(payload: ProjectPathRequest) -> dict[str, object]:
         connection.execute("DELETE FROM notes WHERE project_path = ?", (path,))
         connection.execute("DELETE FROM project_trust_profiles WHERE project_path = ?", (path,))
         connection.execute("DELETE FROM finding_reviews WHERE project_path = ?", (path,))
+        connection.execute("DELETE FROM trusted_dependency_baselines WHERE project_path = ?", (path,))
         connection.execute("DELETE FROM projects WHERE path = ?", (path,))
     return {
         "unregistered": True,
@@ -339,7 +341,8 @@ def run_scan(payload: ProjectPathRequest) -> dict[str, object]:
         "scanCompleteness": result["scanCompleteness"],
         "dependencyTrust": result.get("dependencyTrust"),
     }
-    return enrich_scan(response, _finding_reviews(str(project)))
+    response = enrich_scan(response, _finding_reviews(str(project)))
+    return enrich_trusted_baseline(response, _trusted_baseline_row(str(project)))
 
 
 @app.get("/api/scans/history")
@@ -351,7 +354,93 @@ def scan_history(project_path: str = Query(min_length=1, max_length=1000)) -> di
             (str(project),),
         ).fetchall()
     reviews = _finding_reviews(str(project))
-    return {"scans": [enrich_scan(row_to_scan(row), reviews) for row in rows]}
+    baseline = _trusted_baseline_row(str(project))
+    return {"scans": [enrich_trusted_baseline(enrich_scan(row_to_scan(row), reviews), baseline) for row in rows]}
+
+
+@app.get("/api/trusted-dependency-baseline")
+def get_trusted_dependency_baseline(project_path: str = Query(min_length=1, max_length=1000)) -> dict[str, object]:
+    project = _ensure_project(project_path)
+    return public_baseline(_trusted_baseline_row(str(project)))
+
+
+@app.put("/api/trusted-dependency-baseline")
+def approve_trusted_dependency_baseline(payload: TrustedDependencyBaselineApprove) -> dict[str, object]:
+    project = _ensure_project(payload.project_path)
+    fingerprint = payload.fingerprint.strip().lower()
+    if not valid_baseline_fingerprint(fingerprint):
+        raise HTTPException(status_code=422, detail="Trusted baseline fingerprint is invalid.")
+    scan = _scan_for_baseline_approval(str(project), payload.scan_id)
+    approval = approval_for_analysis(scan.get("dependencyTrust"))
+    if not approval["eligible"]:
+        raise HTTPException(status_code=409, detail=approval["reason"])
+    if approval["fingerprint"] != fingerprint:
+        raise HTTPException(status_code=409, detail="Dependency snapshot changed; refresh the scan before approving it.")
+    try:
+        snapshot = snapshot_from_analysis(scan["dependencyTrust"])
+    except BaselineError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    now = _now()
+    note = payload.note.strip()
+    values = (
+        str(project), BASELINE_SCHEMA_VERSION, DEPENDENCY_TRUST_SCHEMA_VERSION, fingerprint,
+        snapshot_json(snapshot), scan["id"], scan["scan_date"], note, now, now,
+    )
+    with get_connection() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        latest = connection.execute(
+            "SELECT id FROM scans WHERE project_path = ? ORDER BY scan_date DESC, id DESC LIMIT 1",
+            (str(project),),
+        ).fetchone()
+        if not latest or latest["id"] != scan["id"]:
+            raise HTTPException(status_code=409, detail="Only the current latest scan can be approved as a trusted baseline.")
+        existing = connection.execute(
+            "SELECT 1 FROM trusted_dependency_baselines WHERE project_path = ?", (str(project),),
+        ).fetchone()
+        if existing and not payload.replace:
+            raise HTTPException(status_code=409, detail="A trusted dependency baseline already exists. Confirm replacement to continue.")
+        if existing:
+            connection.execute(
+                "UPDATE trusted_dependency_baselines SET baseline_schema_version = ?, dependency_schema_version = ?, "
+                "fingerprint = ?, snapshot_json = ?, source_scan_id = ?, source_scan_date = ?, note = ?, "
+                "created_at = ?, updated_at = ? WHERE project_path = ?",
+                (*values[1:], values[0]),
+            )
+        else:
+            connection.execute(
+                "INSERT INTO trusted_dependency_baselines (project_path, baseline_schema_version, dependency_schema_version, "
+                "fingerprint, snapshot_json, source_scan_id, source_scan_date, note, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                values,
+            )
+        row = connection.execute(
+            "SELECT * FROM trusted_dependency_baselines WHERE project_path = ?", (str(project),),
+        ).fetchone()
+    return public_baseline(dict(row))
+
+
+@app.patch("/api/trusted-dependency-baseline")
+def update_trusted_dependency_baseline_note(payload: TrustedDependencyBaselineNote) -> dict[str, object]:
+    project = _ensure_project(payload.project_path)
+    with get_connection() as connection:
+        cursor = connection.execute(
+            "UPDATE trusted_dependency_baselines SET note = ?, updated_at = ? WHERE project_path = ?",
+            (payload.note.strip(), _now(), str(project)),
+        )
+        if cursor.rowcount != 1:
+            raise HTTPException(status_code=404, detail="No trusted dependency baseline is configured for this project.")
+        row = connection.execute(
+            "SELECT * FROM trusted_dependency_baselines WHERE project_path = ?", (str(project),),
+        ).fetchone()
+    return public_baseline(dict(row))
+
+
+@app.delete("/api/trusted-dependency-baseline")
+def clear_trusted_dependency_baseline(payload: ProjectPathRequest) -> dict[str, object]:
+    project = _ensure_project(payload.project_path)
+    with get_connection() as connection:
+        connection.execute("DELETE FROM trusted_dependency_baselines WHERE project_path = ?", (str(project),))
+    return {"configured": False, "cleared": True, "status": "not-configured"}
 
 
 @app.get("/api/finding-reviews")
@@ -549,6 +638,32 @@ def _project_has_fingerprint(project_path: str, fingerprint: str) -> bool:
         finally:
             rows.close()
     return False
+
+
+def _trusted_baseline_row(project_path: str) -> dict[str, object] | None:
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT * FROM trusted_dependency_baselines WHERE project_path = ?", (project_path,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def _scan_for_baseline_approval(project_path: str, scan_id: int) -> dict[str, object]:
+    with get_connection() as connection:
+        row = connection.execute(
+            "SELECT * FROM scans WHERE id = ? AND project_path = ?", (scan_id, project_path),
+        ).fetchone()
+        if not row:
+            other_project = connection.execute("SELECT 1 FROM scans WHERE id = ?", (scan_id,)).fetchone()
+            if other_project:
+                raise HTTPException(status_code=403, detail="The selected scan belongs to another project.")
+            raise HTTPException(status_code=404, detail="The selected scan was not found.")
+        latest = connection.execute(
+            "SELECT id FROM scans WHERE project_path = ? ORDER BY scan_date DESC, id DESC LIMIT 1", (project_path,),
+        ).fetchone()
+    if not latest or latest["id"] != scan_id:
+        raise HTTPException(status_code=409, detail="Only the current latest scan can be approved as a trusted baseline.")
+    return row_to_scan(row)
 
 
 def _now() -> str:

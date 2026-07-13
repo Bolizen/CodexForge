@@ -69,6 +69,19 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS finding_reviews_project_path
             ON finding_reviews (project_path);
+
+            CREATE TABLE IF NOT EXISTS trusted_dependency_baselines (
+                project_path TEXT PRIMARY KEY,
+                baseline_schema_version INTEGER NOT NULL,
+                dependency_schema_version INTEGER NOT NULL,
+                fingerprint TEXT NOT NULL,
+                snapshot_json TEXT NOT NULL,
+                source_scan_id INTEGER,
+                source_scan_date TEXT NOT NULL DEFAULT '',
+                note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             """
         )
         connection.execute(

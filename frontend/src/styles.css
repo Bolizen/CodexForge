@@ -488,6 +488,85 @@ pre {
   margin-bottom: 10px;
 }
 
+.trusted-baseline {
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  display: grid;
+  gap: 9px;
+  margin: 12px 0;
+  min-width: 0;
+  padding: 12px;
+}
+
+.trusted-baseline-heading {
+  align-items: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  justify-content: space-between;
+}
+
+.trusted-baseline-heading h4,
+.trusted-baseline-heading p,
+.trusted-baseline > p {
+  margin: 0;
+}
+
+.trusted-baseline-heading > div {
+  min-width: 0;
+}
+
+.trusted-baseline-status.status-identical {
+  border-color: rgba(103, 214, 32, 0.32);
+  color: #8df04a;
+}
+
+.trusted-baseline-status.status-drift,
+.trusted-baseline-status.status-incomplete {
+  border-color: rgba(255, 177, 59, 0.34);
+  color: #ffbf58;
+}
+
+.trusted-baseline-metadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 16px;
+}
+
+.trusted-baseline-metadata span,
+.trusted-baseline-note {
+  color: #cbd1d0;
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.trusted-baseline-actions,
+.trusted-baseline-approval,
+.trusted-baseline-note-form,
+.trusted-baseline-note-form label {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.trusted-baseline-approval textarea,
+.trusted-baseline-note-form textarea {
+  max-width: 100%;
+  min-width: 0;
+  width: 100%;
+}
+
+.trusted-baseline-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.baseline-ineligible {
+  margin: 0;
+}
+
 .dependency-overview-counts {
   display: flex;
   flex-wrap: wrap;

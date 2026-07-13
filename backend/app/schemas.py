@@ -63,3 +63,20 @@ class FindingReviewRequest(ProjectPathRequest):
 
 class FindingReviewDelete(ProjectPathRequest):
     fingerprint: str = Field(min_length=68, max_length=68)
+
+
+class TrustedDependencyBaselineApprove(ProjectPathRequest):
+    scan_id: int = Field(gt=0)
+    fingerprint: str = Field(min_length=70, max_length=70)
+    note: str = Field(default="", max_length=1000)
+    replace: bool = False
+
+    class Config:
+        extra = "forbid"
+
+
+class TrustedDependencyBaselineNote(ProjectPathRequest):
+    note: str = Field(default="", max_length=1000)
+
+    class Config:
+        extra = "forbid"

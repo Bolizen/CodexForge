@@ -613,6 +613,255 @@ test("late dependency history cannot cross project selection", async () => {
   assert.doesNotMatch(document.querySelector(".dependency-trust").textContent, /obsolete-a/);
 });
 
+test("eligible dependency snapshot approval uses the real handler and refreshes active history", async () => {
+  const current = trustedBaselineScan(110, trustedBaselineFixture({
+    approval: { eligible: true, fingerprint: `cfdb1_${"a".repeat(64)}`, reason: "" },
+  }));
+  await renderApp();
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [current] });
+  await openReports();
+
+  const reportPanel = document.querySelector("#reports .trusted-baseline");
+  assert.match(reportPanel.textContent, /No trusted baseline configured/);
+  const approvalNote = reportPanel.querySelector("textarea");
+  await input(approvalNote, "Approved after local review.");
+  assert.equal(approvalNote.value, "Approved after local review.");
+  assert.doesNotMatch(JSON.stringify(parseStoredSession()), /Approved after local review/);
+  await click(buttonWithText("Trust this dependency snapshot"));
+
+  const approvalRequest = await fetchHarness.next("/api/trusted-dependency-baseline", { method: "PUT", projectPath: PROJECT_A_PATH });
+  assert.deepEqual(approvalRequest.body, {
+    project_path: PROJECT_A_PATH,
+    scan_id: 110,
+    fingerprint: `cfdb1_${"a".repeat(64)}`,
+    note: "Approved after local review.",
+    replace: false,
+  });
+  assert.equal(Object.hasOwn(approvalRequest.body, "snapshot"), false);
+  await respond(approvalRequest, { configured: true });
+  const refreshedHistory = await fetchHarness.next("/api/scans/history", { projectPath: PROJECT_A_PATH });
+  await respond(refreshedHistory, { scans: [trustedBaselineScan(110, configuredTrustedBaseline("identical", {
+    note: "Approved after local review.",
+  }))] });
+
+  assert.match(document.querySelector("#reports .trusted-baseline").textContent, /Matches approved baseline/);
+  assert.match(document.querySelector("#reports .trusted-baseline").textContent, /Approved after local review/);
+  assert.match(document.querySelector("#reports .trusted-baseline-actions").textContent, /baseline replaced|snapshot approved/i);
+});
+
+test("legacy empty and incomplete dependency analyses cannot expose a trust action", async () => {
+  const incomplete = trustedBaselineScan(113, trustedBaselineFixture({
+    approval: { eligible: false, fingerprint: "", reason: "Dependency analysis is incomplete and cannot be approved as a trusted baseline." },
+  }), { status: "incomplete" });
+  const empty = {
+    ...withCompleteness(scan(112, "none", "2026-07-11T14:12:00Z"), { complete: true }),
+    dependencyTrust: emptyDependencyTrustFixture({
+      trustedBaseline: trustedBaselineFixture({
+        approval: { eligible: false, fingerprint: "", reason: "No supported dependency metadata was analyzed in this scan." },
+      }),
+    }),
+  };
+  const legacy = {
+    ...scan(111, "none", "2026-07-11T14:11:00Z"),
+    trustedDependencyBaseline: trustedBaselineFixture({
+      approval: { eligible: false, fingerprint: "", reason: "This scan predates dependency analysis." },
+    }),
+  };
+  await renderApp();
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [incomplete, empty, legacy] });
+  await openReports();
+
+  let reportPanel = document.querySelector("#reports .trusted-baseline");
+  assert.match(reportPanel.textContent, /analysis is incomplete/i);
+  assert.doesNotMatch(reportPanel.textContent, /Trust this dependency snapshot/);
+
+  const historyRows = [...document.querySelectorAll(".history-row")];
+  await click(historyRows[1].querySelector(".history-view-button"));
+  reportPanel = document.querySelector("#reports .trusted-baseline");
+  assert.match(reportPanel.textContent, /No supported dependency metadata/);
+  assert.doesNotMatch(reportPanel.textContent, /Trust this dependency snapshot/);
+
+  await click(historyRows[2].querySelector(".history-view-button"));
+  reportPanel = document.querySelector("#reports .trusted-baseline");
+  assert.match(reportPanel.textContent, /predates dependency analysis/);
+  assert.doesNotMatch(reportPanel.textContent, /Trust this dependency snapshot/);
+});
+
+test("trusted baseline replacement and clearing require confirmation and refresh history", async () => {
+  let current = trustedBaselineScan(114, configuredTrustedBaseline("drift"));
+  await renderApp();
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [current] });
+  await openReports();
+
+  let confirmed = false;
+  window.confirm = () => confirmed;
+  await click(buttonWithText("Replace trusted baseline"));
+  assert.equal(fetchHarness.count("/api/trusted-dependency-baseline", "PUT"), 0);
+
+  confirmed = true;
+  await click(buttonWithText("Replace trusted baseline"));
+  const replaceRequest = await fetchHarness.next("/api/trusted-dependency-baseline", { method: "PUT" });
+  assert.equal(replaceRequest.body.replace, true);
+  assert.equal(Object.hasOwn(replaceRequest.body, "snapshot"), false);
+  await respond(replaceRequest, { configured: true });
+  current = trustedBaselineScan(114, configuredTrustedBaseline("identical", { fingerprint: `cfdb1_${"c".repeat(64)}` }));
+  await respond(await fetchHarness.next("/api/scans/history", { projectPath: PROJECT_A_PATH }), { scans: [current] });
+
+  confirmed = false;
+  await click(buttonWithText("Clear trusted baseline"));
+  assert.equal(fetchHarness.count("/api/trusted-dependency-baseline", "DELETE"), 0);
+  confirmed = true;
+  await click(buttonWithText("Clear trusted baseline"));
+  const clearRequest = await fetchHarness.next("/api/trusted-dependency-baseline", { method: "DELETE" });
+  assert.deepEqual(clearRequest.body, { project_path: PROJECT_A_PATH });
+  await respond(clearRequest, { configured: false, cleared: true });
+  await respond(await fetchHarness.next("/api/scans/history", { projectPath: PROJECT_A_PATH }), {
+    scans: [trustedBaselineScan(114, trustedBaselineFixture({
+      approval: { eligible: true, fingerprint: `cfdb1_${"c".repeat(64)}`, reason: "" },
+    }))],
+  });
+  assert.match(document.querySelector("#reports .trusted-baseline").textContent, /Not configured/);
+});
+
+test("trusted baseline note editing preserves snapshot identity and uses the scoped mutation handler", async () => {
+  const fingerprint = `cfdb1_${"9".repeat(64)}`;
+  const current = trustedBaselineScan(123, configuredTrustedBaseline("identical", { fingerprint }));
+  await renderApp();
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [current] });
+  await openReports();
+
+  await click(buttonWithText("Edit note"));
+  const noteField = document.querySelector("#reports .trusted-baseline-note-form textarea");
+  await input(noteField, "Updated project-scoped approval note.");
+  assert.doesNotMatch(JSON.stringify(parseStoredSession()), /Updated project-scoped approval note/);
+  await click(buttonWithText("Save note"));
+
+  const request = await fetchHarness.next("/api/trusted-dependency-baseline", { method: "PATCH", projectPath: PROJECT_A_PATH });
+  assert.deepEqual(request.body, {
+    project_path: PROJECT_A_PATH,
+    note: "Updated project-scoped approval note.",
+  });
+  assert.equal(Object.hasOwn(request.body, "fingerprint"), false);
+  assert.equal(Object.hasOwn(request.body, "snapshot"), false);
+  await respond(request, { configured: true, fingerprint, note: "Updated project-scoped approval note." });
+  await respond(await fetchHarness.next("/api/scans/history", { projectPath: PROJECT_A_PATH }), {
+    scans: [trustedBaselineScan(123, configuredTrustedBaseline("identical", {
+      fingerprint,
+      note: "Updated project-scoped approval note.",
+    }))],
+  });
+
+  const panel = document.querySelector("#reports .trusted-baseline");
+  assert.match(panel.textContent, /Updated project-scoped approval note/);
+  assert.match(panel.textContent, /cfdb1_999999\.\.\.999999/);
+});
+
+test("obsolete trusted baseline responses and approval drafts cannot cross project selection", async () => {
+  const eligibleA = trustedBaselineScan(115, trustedBaselineFixture({
+    approval: { eligible: true, fingerprint: `cfdb1_${"d".repeat(64)}`, reason: "" },
+  }));
+  await renderApp();
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [eligibleA] });
+  await openReports();
+  const note = document.querySelector("#reports .trusted-baseline textarea");
+  await input(note, "Project A draft must not cross projects.");
+  await click(buttonWithText("Trust this dependency snapshot"));
+  const obsolete = await fetchHarness.next("/api/trusted-dependency-baseline", { method: "PUT", projectPath: PROJECT_A_PATH });
+
+  await selectProject("Project B");
+  assert.equal(obsolete.signal.aborted, true);
+  const eligibleB = {
+    ...trustedBaselineScan(116, trustedBaselineFixture({
+      approval: { eligible: true, fingerprint: `cfdb1_${"e".repeat(64)}`, reason: "" },
+    })),
+    project_path: PROJECT_B_PATH,
+  };
+  await resolveDetails(await takeDetailRequests(PROJECT_B_PATH), { scans: [eligibleB] });
+  assert.equal(document.querySelector("#reports .trusted-baseline textarea").value, "");
+
+  await respond(obsolete, { configured: true });
+  assert.doesNotMatch(document.body.textContent, /snapshot approved/i);
+  assert.match(selectedProjectText(), /Project B/);
+  assert.equal(fetchHarness.count("/api/scans/history"), 2);
+});
+
+test("a current trusted baseline failure is scoped and does not trigger a success refresh", async () => {
+  const eligible = trustedBaselineScan(122, trustedBaselineFixture({
+    approval: { eligible: true, fingerprint: `cfdb1_${"1".repeat(64)}`, reason: "" },
+  }));
+  await renderApp();
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [eligible] });
+  await openReports();
+  await click(buttonWithText("Trust this dependency snapshot"));
+  const failed = await fetchHarness.next("/api/trusted-dependency-baseline", { method: "PUT" });
+  await respond(failed, { detail: "Baseline approval was rejected." }, 409);
+
+  assert.match(document.querySelector("#reports .trusted-baseline-actions").textContent, /Baseline approval was rejected/);
+  assert.equal(fetchHarness.count("/api/scans/history"), 1);
+  assert.equal(buttonWithText("Trust this dependency snapshot").disabled, false);
+});
+
+test("unregistering aborts an in-flight trusted baseline mutation", async () => {
+  const eligible = trustedBaselineScan(121, trustedBaselineFixture({
+    approval: { eligible: true, fingerprint: `cfdb1_${"f".repeat(64)}`, reason: "" },
+  }));
+  await renderApp();
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [eligible] });
+  await openReports();
+  await click(buttonWithText("Trust this dependency snapshot"));
+  const obsolete = await fetchHarness.next("/api/trusted-dependency-baseline", { method: "PUT" });
+
+  window.confirm = () => true;
+  await click(document.querySelector('a[href="#projects"]'));
+  const selectedRow = [...document.querySelectorAll(".projects-table-row")]
+    .find((row) => row.textContent.includes("Project A"));
+  await click([...selectedRow.querySelectorAll("button")].find((button) => button.textContent.includes("Unregister")));
+  const unregister = await fetchHarness.next("/api/projects", { method: "DELETE", projectPath: PROJECT_A_PATH });
+  await respond(unregister, { unregistered: true, path: PROJECT_A_PATH, message: "Project unregistered. Project files were not changed." });
+  assert.equal(obsolete.signal.aborted, true);
+  await respond(await fetchHarness.next("/api/projects"), { project_root: "C:/workspace", message: "", projects: [PROJECT_B] });
+  await respond(obsolete, { detail: "Obsolete baseline error." }, 500);
+
+  assert.doesNotMatch(document.body.textContent, /Obsolete baseline error|snapshot approved/i);
+  assert.doesNotMatch(document.querySelector(".projects-table").textContent, /Project A/);
+});
+
+test("trusted and previous-scan comparisons remain distinct across history statuses", async () => {
+  const drift = trustedBaselineScan(120, configuredTrustedBaseline("drift", {
+    comparison: {
+      status: "drift",
+      explanation: "Drift detected from approved baseline.",
+      changeCount: 1,
+      highestSeverity: "medium",
+      changes: [{ changeType: "version-changed", name: "alpha", currentValue: "2.0.0" }],
+      findings: [{ type: "trusted-baseline-version-changed", severity: "medium" }],
+    },
+  }), { comparison: { baselineStatus: "available", changeCount: 1, changes: [{ changeType: "version-changed", name: "alpha" }], explanation: "Changed from previous scan." } });
+  const identical = trustedBaselineScan(119, configuredTrustedBaseline("identical"));
+  const incomplete = trustedBaselineScan(118, configuredTrustedBaseline("incomplete", {
+    comparison: { status: "incomplete", explanation: "Comparison incomplete; removals were not inferred.", highestSeverity: "medium" },
+  }));
+  const incompatible = trustedBaselineScan(117, configuredTrustedBaseline("incompatible", {
+    comparison: { status: "incompatible", explanation: "Dependency analysis schema is incompatible.", highestSeverity: "medium" },
+  }));
+  await renderApp();
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [drift, identical, incomplete, incompatible] });
+  await openReports();
+
+  assert.match(document.querySelector("#reports").textContent, /Trusted Dependency Baseline/);
+  assert.match(document.querySelector("#reports").textContent, /Drift detected/);
+  assert.match(document.querySelector("#reports").textContent, /Changes since previous scan/);
+
+  const rows = [...document.querySelectorAll(".history-row")];
+  await click(rows[1].querySelector(".history-view-button"));
+  assert.match(document.querySelector("#reports .trusted-baseline").textContent, /Matches approved baseline/);
+  await click(rows[2].querySelector(".history-view-button"));
+  assert.match(document.querySelector("#reports .trusted-baseline").textContent, /Comparison incomplete/);
+  await click(rows[3].querySelector(".history-view-button"));
+  assert.match(document.querySelector("#reports .trusted-baseline").textContent, /Incompatible/);
+  assert.match(document.querySelector("#reports .trusted-baseline").textContent, /historical evidence is unchanged/i);
+});
+
 test("scan button gates duplicate submissions and shows progress", async () => {
   await renderReadyProjectA();
   await click(runScanButton());
@@ -1381,6 +1630,70 @@ function emptyDependencyTrustFixture(overrides = {}) {
     limitations: [],
     ...overrides,
   });
+}
+
+function trustedBaselineFixture(overrides = {}) {
+  const comparison = overrides.comparison || {};
+  const approval = overrides.approval || {};
+  return {
+    configured: false,
+    valid: false,
+    status: "not-configured",
+    approval: { eligible: false, fingerprint: "", reason: "This scan is not eligible.", ...approval },
+    comparison: {
+      status: "not-configured",
+      explanation: "No trusted dependency baseline is configured.",
+      changeCount: 0,
+      changes: [],
+      findings: [],
+      highestSeverity: "none",
+      truncated: false,
+      ...comparison,
+    },
+    ...overrides,
+    approval: { eligible: false, fingerprint: "", reason: "This scan is not eligible.", ...approval },
+    comparison: {
+      status: "not-configured",
+      explanation: "No trusted dependency baseline is configured.",
+      changeCount: 0,
+      changes: [],
+      findings: [],
+      highestSeverity: "none",
+      truncated: false,
+      ...comparison,
+    },
+  };
+}
+
+function configuredTrustedBaseline(status, overrides = {}) {
+  return trustedBaselineFixture({
+    configured: true,
+    valid: true,
+    status: "configured",
+    fingerprint: `cfdb1_${"b".repeat(64)}`,
+    sourceScanId: 100,
+    sourceScanDate: "2026-07-10T12:00:00Z",
+    createdAt: "2026-07-10T12:00:00Z",
+    updatedAt: "2026-07-10T12:00:00Z",
+    note: "Reviewed baseline.",
+    approval: { eligible: true, fingerprint: `cfdb1_${"c".repeat(64)}`, reason: "" },
+    comparison: {
+      status,
+      explanation: status === "identical" ? "Matches approved baseline." : `${status} trusted baseline comparison.`,
+      changeCount: status === "drift" ? 1 : 0,
+      highestSeverity: status === "drift" ? "medium" : "none",
+      changes: status === "drift" ? [{ changeType: "version-changed", name: "alpha", currentValue: "2.0.0" }] : [],
+      findings: status === "drift" ? [{ type: "trusted-baseline-version-changed", severity: "medium" }] : [],
+    },
+    ...overrides,
+  });
+}
+
+function trustedBaselineScan(id, baseline, dependencyOverrides = {}) {
+  return {
+    ...withCompleteness(scan(id, "low", `2026-07-11T14:${String(id - 100).padStart(2, "0")}:00Z`), { complete: true }),
+    dependencyTrust: dependencyTrustFixture({ trustedBaseline: baseline, ...dependencyOverrides }),
+  };
 }
 
 async function flushMicrotasks() {

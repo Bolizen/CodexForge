@@ -174,6 +174,9 @@ export function buildScanReportMarkdown(result, report, comparison, trustContext
     "## Dependency Trust",
     formatDependencyTrust(result?.dependencyTrust, findings),
     "",
+    "## Trusted Dependency Baseline",
+    formatTrustedDependencyBaseline(report?.dependencyTrust?.trustedBaseline),
+    "",
     "## Findings",
     formatFindings(findings),
     "",
@@ -219,6 +222,48 @@ export function buildScanReportMarkdown(result, report, comparison, trustContext
     formatMarkdownComparison(comparison),
     "",
   ].join("\n");
+}
+
+function formatTrustedDependencyBaseline(baseline) {
+  if (!baseline?.configured) return "No trusted baseline configured. This does not establish dependency safety or package reputation.";
+  if (!baseline.valid) return [
+    "Status: Baseline unavailable",
+    escapeMarkdownText(baseline.explanation || "The stored baseline is invalid or incompatible and was not used."),
+    "This comparison records explicit baseline drift; it does not verify that dependencies are safe or malware-free.",
+  ].join("\n");
+  const comparison = baseline.comparison || {};
+  const lines = [
+    `Status: ${escapeMarkdownText(trustedBaselineComparisonLabel(comparison.status))}`,
+    `- Approved: ${escapeMarkdownText(formatReportDate(baseline.createdAt) || "Date unavailable")}`,
+    `- Source scan: ${escapeMarkdownText(formatReportDate(baseline.sourceScanDate) || "Date unavailable")}`,
+    `- Fingerprint: ${inlineCode(shortBaselineFingerprint(baseline.fingerprint))}`,
+    `- Drift changes: ${numberOrZero(comparison.changeCount)}`,
+    `- Highest drift severity: ${escapeMarkdownText(String(comparison.highestSeverity || "none").toUpperCase())}`,
+  ];
+  if (baseline.note) lines.push(`- Approval note: ${escapeMarkdownText(baseline.note)}`);
+  if (comparison.explanation) lines.push(`- Comparison: ${escapeMarkdownText(comparison.explanation)}`);
+  const typeCounts = (comparison.findings || []).reduce((counts, finding) => {
+    const type = presentText(finding?.type) || "trusted-baseline-drift";
+    counts[type] = (counts[type] || 0) + 1;
+    return counts;
+  }, {});
+  const summaries = Object.entries(typeCounts).sort(([left], [right]) => left.localeCompare(right));
+  if (summaries.length) {
+    lines.push("- Trusted-baseline findings:", ...summaries.map(([type, count]) => `  - ${inlineCode(type)}: ${count}`));
+    const evidence = (comparison.findings || []).slice(0, 50);
+    lines.push("- Compact finding evidence:", ...evidence.map((finding) => {
+      const severity = escapeMarkdownText(String(finding?.severity || "low").toUpperCase());
+      const type = inlineCode(presentText(finding?.type) || "trusted-baseline-drift");
+      const subject = inlineCode(finding?.package || finding?.path);
+      const explanation = escapeMarkdownText(finding?.explanation);
+      return `  - ${severity} ${type}${subject ? ` — ${subject}` : ""}${explanation ? `: ${explanation}` : ""}`;
+    }));
+    if ((comparison.findings || []).length > evidence.length) {
+      lines.push(`  - ${(comparison.findings || []).length - evidence.length} additional trusted-baseline findings are summarized above.`);
+    }
+  }
+  lines.push("This comparison records explicit baseline drift; it does not verify that dependencies are safe or malware-free.");
+  return lines.join("\n");
 }
 
 function formatDependencyTrust(value, findings) {
@@ -577,3 +622,4 @@ import {
   normalizeDependencyTrust,
 } from "./dependencyTrust.js";
 import { findingReviewLabel, findingReviewSummary } from "./findingReviews.js";
+import { shortBaselineFingerprint, trustedBaselineComparisonLabel } from "./trustedDependencyBaseline.js";

@@ -423,6 +423,75 @@ test("dependency Markdown remains bounded for a capped adversarial inventory", (
   assert.ok(markdown.length < 20_000);
 });
 
+test("trusted dependency baseline Markdown distinguishes configuration and comparison states", () => {
+  const statuses = [
+    ["identical", "Matches approved baseline"],
+    ["drift", "Drift detected"],
+    ["incomplete", "Comparison incomplete"],
+    ["incompatible", "Incompatible"],
+    ["invalid", "Baseline unavailable"],
+  ];
+  for (const [status, label] of statuses) {
+    const baseline = markdownBaseline(status);
+    const markdown = buildScanReportMarkdown(
+      scanResult([]),
+      reportFixture({ totalFindings: 0, dependencyTrust: { trustedBaseline: baseline } }),
+      null,
+      { configured: false },
+    );
+    assert.match(markdown, /^## Trusted Dependency Baseline$/m);
+    assert.match(markdown, new RegExp(`^Status: ${label}$`, "m"));
+    assert.match(markdown, /This comparison records explicit baseline drift; it does not verify that dependencies are safe or malware-free/);
+  }
+});
+
+test("trusted baseline Markdown escapes notes and exports only compact drift evidence", () => {
+  const baseline = markdownBaseline("drift", {
+    note: "Reviewed <script>bad()</script> [link](https://example.invalid)\nnext line",
+    comparison: {
+      status: "drift",
+      explanation: "Drift detected from approved baseline.",
+      changeCount: 3,
+      highestSeverity: "high",
+      findings: [
+        { type: "trusted-baseline-integrity-changed", severity: "high" },
+        { type: "trusted-baseline-version-changed", severity: "low" },
+        { type: "trusted-baseline-version-changed", severity: "low" },
+      ],
+    },
+    snapshot: { sourceIdentifier: "user:token@example.invalid?secret=yes" },
+  });
+  const result = {
+    ...scanResult([]),
+    dependencyTrust: {
+      schemaVersion: 1,
+      status: "complete",
+      ecosystems: ["node"],
+      manifests: ["package.json"],
+      lockfiles: ["package-lock.json"],
+      packageManagers: ["npm"],
+      entries: [],
+      comparison: { baselineStatus: "available", changeCount: 0, changes: [] },
+    },
+  };
+  const markdown = buildScanReportMarkdown(
+    result,
+    reportFixture({ totalFindings: 0, dependencyTrust: { trustedBaseline: baseline } }),
+    null,
+    { configured: false },
+  );
+
+  assert.match(markdown, /- Drift changes: 3/);
+  assert.match(markdown, /- Highest drift severity: HIGH/);
+  assert.match(markdown, /`trusted-baseline-integrity-changed`: 1/);
+  assert.match(markdown, /`trusted-baseline-version-changed`: 2/);
+  assert.match(markdown, /HIGH `trusted-baseline-integrity-changed`/);
+  assert.match(markdown, /LOW `trusted-baseline-version-changed`/);
+  assert.ok(markdown.includes("Reviewed \\<script\\>bad()\\</script\\> \\[link\\](https://example.invalid) next line"));
+  assert.doesNotMatch(markdown, /<script>|user:token|secret=yes|sourceIdentifier|snapshot/);
+  assert.match(markdown, /^## Comparison with previous scan$/m);
+});
+
 function finding(type, path, explanation, metadata = {}) {
   return {
     type,
@@ -466,6 +535,37 @@ function comparisonFixture() {
     reviewedDelta: "+2 reviewed files",
     ignoredDelta: "No change",
     typeSummary: "hardlink: +1",
+  };
+}
+
+function markdownBaseline(status, overrides = {}) {
+  const comparison = overrides.comparison || {};
+  return {
+    configured: true,
+    valid: status !== "invalid",
+    fingerprint: `cfdb1_${"a".repeat(64)}`,
+    sourceScanDate: "2026-07-12T10:00:00Z",
+    createdAt: "2026-07-12T10:05:00Z",
+    note: "Approved locally.",
+    comparison: {
+      status,
+      explanation: `${status} trusted baseline comparison.`,
+      changeCount: 0,
+      highestSeverity: "none",
+      changes: [],
+      findings: [],
+      ...comparison,
+    },
+    ...overrides,
+    comparison: {
+      status,
+      explanation: `${status} trusted baseline comparison.`,
+      changeCount: 0,
+      highestSeverity: "none",
+      changes: [],
+      findings: [],
+      ...comparison,
+    },
   };
 }
 
