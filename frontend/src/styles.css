@@ -563,6 +563,10 @@ pre {
   gap: 8px;
 }
 
+.trusted-baseline-compact-actions {
+  justify-items: start;
+}
+
 .baseline-ineligible {
   margin: 0;
 }
@@ -1883,16 +1887,32 @@ textarea::placeholder {
   font-size: 0.78rem;
 }
 
-.risk-reasons li::before {
-  color: #67d620;
-  content: "✓";
-  font-weight: 900;
-  margin-right: 10px;
+.risk-indicator {
+  align-items: flex-start;
+  display: flex;
+  gap: 10px;
 }
 
-.coverage-unknown .risk-reasons li::before {
+.risk-indicator-symbol {
+  flex: 0 0 1rem;
+  font-weight: 900;
+  text-align: center;
+}
+
+.risk-indicator-success .risk-indicator-symbol {
+  color: #67d620;
+}
+
+.risk-indicator-neutral .risk-indicator-symbol {
   color: #a8b0b2;
-  content: "?";
+}
+
+.risk-indicator-warning .risk-indicator-symbol {
+  color: #ffb13b;
+}
+
+.risk-indicator-high .risk-indicator-symbol {
+  color: #ff6b45;
 }
 
 .category-table {

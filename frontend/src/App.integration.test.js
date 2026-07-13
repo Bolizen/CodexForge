@@ -328,6 +328,10 @@ test("complete scan with no findings retains verified clean presentation", async
   assert.deepEqual(categoryStatuses().slice(0, 6), Array(6).fill("Clean"));
   assert.deepEqual(categoryStatuses().slice(6), ["Count", "Count"]);
   assert.ok(document.querySelector(".overall-risk-panel .risk-ring-none"));
+  const cleanRiskItems = [...document.querySelectorAll(".overall-risk-panel .risk-reasons li")];
+  assert.ok(cleanRiskItems[0].classList.contains("risk-indicator-success"));
+  assert.ok(cleanRiskItems.at(-1).classList.contains("risk-indicator-neutral"));
+  assert.match(cleanRiskItems.at(-1).textContent, /Risk tolerance: normal/);
   assert.doesNotMatch(document.body.textContent, /coverage unknown/i);
   assert.match(document.querySelector(".recent-activity").textContent, /Scan completed/);
   assertProjectSummary(document.querySelector(".project-item"), "Findings: None recorded", "Coverage: Complete");
@@ -337,6 +341,32 @@ test("complete scan with no findings retains verified clean presentation", async
   assert.equal(document.querySelector(".contextual-scan-button"), null);
   assertReportHeader("0 findings", "Complete coverage", { verified: true });
   assertHistorySummary("0 findings", "Coverage: Complete");
+});
+
+test("unresolved high contributors and risk tolerance never use success indicators", async () => {
+  const highFinding = {
+    type: "suspicious-text-pattern",
+    severity: "high",
+    path: "src/runtime.js",
+    pattern: "eval(",
+    explanation: "A suspicious text pattern was recorded.",
+    action: "Review the call before running this code.",
+  };
+  await renderApp();
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), {
+    scans: [scanWithFindings(10, [highFinding])],
+  });
+
+  const riskItems = [...document.querySelectorAll(".overall-risk-panel .risk-reasons li")];
+  const contributor = riskItems.find((item) => item.textContent.includes("Main contributors"));
+  const tolerance = riskItems.find((item) => item.textContent.includes("Risk tolerance"));
+  assert.ok(contributor, "Expected an unresolved contributor summary");
+  assert.ok(contributor.classList.contains("risk-indicator-high"));
+  assert.equal(contributor.querySelector(".risk-indicator-symbol").textContent, "!");
+  assert.equal(contributor.classList.contains("risk-indicator-success"), false);
+  assert.ok(tolerance.classList.contains("risk-indicator-neutral"));
+  assert.equal(tolerance.querySelector(".risk-indicator-symbol").textContent, "•");
+  assert.equal(tolerance.classList.contains("risk-indicator-success"), false);
 });
 
 test("legacy scan with unknown coverage never presents verified clean", async () => {
@@ -516,7 +546,11 @@ test("complete Node and Python dependency analysis renders compact offline trust
 test("complete empty project shows dependency trust without claiming a clean graph", async () => {
   const empty = {
     ...withCompleteness(scan(95, "none", "2026-07-11T14:05:00Z"), { complete: true }),
-    dependencyTrust: emptyDependencyTrustFixture(),
+    dependencyTrust: emptyDependencyTrustFixture({
+      trustedBaseline: trustedBaselineFixture({
+        approval: { eligible: false, fingerprint: "", reason: "No supported dependency metadata was analyzed in this scan." },
+      }),
+    }),
   };
   await renderApp();
   await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [empty] });
@@ -525,6 +559,8 @@ test("complete empty project shows dependency trust without claiming a clean gra
   assert.ok(overview, "Expected Dependency Trust in the selected scan overview");
   assert.match(overview.textContent, /No metadata detected/);
   assert.match(overview.textContent, /No supported Node or Python dependency graph was analyzed/);
+  assert.match(overview.textContent, /Approval unavailable:.*No supported dependency metadata/i);
+  assert.doesNotMatch(overview.textContent, /Trust this snapshot/);
   assert.doesNotMatch(overview.textContent, /clean|verified|Integrity|Consistency issues/i);
 
   await openReports();
@@ -613,6 +649,72 @@ test("late dependency history cannot cross project selection", async () => {
   assert.doesNotMatch(document.querySelector(".dependency-trust").textContent, /obsolete-a/);
 });
 
+test("Workspace Overview approves one eligible snapshot and stays synchronized with Reports", async () => {
+  const fingerprint = `cfdb1_${"7".repeat(64)}`;
+  const current = trustedBaselineScan(109, trustedBaselineFixture({
+    approval: { eligible: true, fingerprint, reason: "" },
+  }));
+  await renderApp();
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [current] });
+
+  const overviewBaseline = document.querySelector(".dependency-trust-overview .trusted-baseline");
+  assert.match(overviewBaseline.textContent, /Not configured/);
+  assert.match(overviewBaseline.textContent, /Approve this dependency snapshot to detect future drift/);
+  assert.equal((overviewBaseline.textContent.match(/Not configured/g) || []).length, 1);
+  const trustButton = [...overviewBaseline.querySelectorAll("button")]
+    .find((button) => button.textContent === "Trust this snapshot");
+  assert.ok(trustButton, "Expected the eligible Overview trust action");
+
+  await click(trustButton);
+  await click(trustButton);
+  assert.equal(fetchHarness.count("/api/trusted-dependency-baseline", "PUT"), 1);
+  const approval = await fetchHarness.next("/api/trusted-dependency-baseline", { method: "PUT", projectPath: PROJECT_A_PATH });
+  assert.deepEqual(approval.body, {
+    project_path: PROJECT_A_PATH,
+    scan_id: 109,
+    fingerprint,
+    note: "",
+    replace: false,
+  });
+  await respond(approval, { configured: true });
+  await respond(await fetchHarness.next("/api/scans/history", { projectPath: PROJECT_A_PATH }), {
+    scans: [trustedBaselineScan(109, configuredTrustedBaseline("identical", { fingerprint }))],
+  });
+
+  const configuredOverview = document.querySelector(".dependency-trust-overview .trusted-baseline");
+  assert.match(configuredOverview.textContent, /Matches approved baseline/);
+  assert.doesNotMatch(configuredOverview.textContent, /Trust this snapshot/);
+  await click(buttonWithText("Manage baseline"));
+  assert.equal(document.querySelector(".topbar h1").textContent, "Reports");
+  assert.equal(document.querySelector("#reports").open, true);
+  assert.match(document.querySelector("#reports .trusted-baseline").textContent, /Matches approved baseline/);
+  assert.ok(buttonWithText("Replace trusted baseline"));
+});
+
+test("an obsolete Overview baseline failure cannot replace the newly selected project state", async () => {
+  const eligibleA = trustedBaselineScan(108, trustedBaselineFixture({
+    approval: { eligible: true, fingerprint: `cfdb1_${"6".repeat(64)}`, reason: "" },
+  }));
+  await renderApp();
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [eligibleA] });
+  await click(buttonWithText("Trust this snapshot"));
+  const obsolete = await fetchHarness.next("/api/trusted-dependency-baseline", { method: "PUT", projectPath: PROJECT_A_PATH });
+
+  await selectProject("Project B");
+  assert.equal(obsolete.signal.aborted, true);
+  const configuredB = {
+    ...trustedBaselineScan(107, configuredTrustedBaseline("identical")),
+    project_path: PROJECT_B_PATH,
+  };
+  await resolveDetails(await takeDetailRequests(PROJECT_B_PATH), { scans: [configuredB] });
+  await respond(obsolete, { detail: "Obsolete approval failure." }, 409);
+
+  const overviewBaseline = document.querySelector(".dependency-trust-overview .trusted-baseline");
+  assert.match(selectedProjectText(), /Project B/);
+  assert.match(overviewBaseline.textContent, /Matches approved baseline/);
+  assert.doesNotMatch(overviewBaseline.textContent, /Obsolete approval failure|Not configured/);
+});
+
 test("eligible dependency snapshot approval uses the real handler and refreshes active history", async () => {
   const current = trustedBaselineScan(110, trustedBaselineFixture({
     approval: { eligible: true, fingerprint: `cfdb1_${"a".repeat(64)}`, reason: "" },
@@ -622,7 +724,8 @@ test("eligible dependency snapshot approval uses the real handler and refreshes 
   await openReports();
 
   const reportPanel = document.querySelector("#reports .trusted-baseline");
-  assert.match(reportPanel.textContent, /No trusted baseline configured/);
+  assert.match(reportPanel.textContent, /Not configured/);
+  assert.match(reportPanel.textContent, /Approve this dependency snapshot to detect future drift/);
   const approvalNote = reportPanel.querySelector("textarea");
   await input(approvalNote, "Approved after local review.");
   assert.equal(approvalNote.value, "Approved after local review.");
@@ -667,8 +770,18 @@ test("legacy empty and incomplete dependency analyses cannot expose a trust acti
       approval: { eligible: false, fingerprint: "", reason: "This scan predates dependency analysis." },
     }),
   };
+  const incompatible = trustedBaselineScan(110, trustedBaselineFixture({
+    approval: { eligible: false, fingerprint: "", reason: "The dependency snapshot schema is incompatible." },
+  }));
+  const historicalEligible = trustedBaselineScan(109, trustedBaselineFixture({
+    approval: { eligible: true, fingerprint: `cfdb1_${"8".repeat(64)}`, reason: "" },
+  }));
   await renderApp();
-  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [incomplete, empty, legacy] });
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [incomplete, empty, legacy, incompatible, historicalEligible] });
+
+  let overviewPanel = document.querySelector(".dependency-trust-overview .trusted-baseline");
+  assert.match(overviewPanel.textContent, /Approval unavailable:.*analysis is incomplete/i);
+  assert.doesNotMatch(overviewPanel.textContent, /Trust this snapshot/);
   await openReports();
 
   let reportPanel = document.querySelector("#reports .trusted-baseline");
@@ -685,6 +798,31 @@ test("legacy empty and incomplete dependency analyses cannot expose a trust acti
   reportPanel = document.querySelector("#reports .trusted-baseline");
   assert.match(reportPanel.textContent, /predates dependency analysis/);
   assert.doesNotMatch(reportPanel.textContent, /Trust this dependency snapshot/);
+
+  await click(historyRows[3].querySelector(".history-view-button"));
+  reportPanel = document.querySelector("#reports .trusted-baseline");
+  assert.match(reportPanel.textContent, /Historical scans cannot replace the active baseline/);
+  assert.doesNotMatch(reportPanel.textContent, /Trust this dependency snapshot/);
+
+  await click(historyRows[4].querySelector(".history-view-button"));
+  reportPanel = document.querySelector("#reports .trusted-baseline");
+  assert.match(reportPanel.textContent, /Historical scans cannot replace the active baseline/);
+  assert.doesNotMatch(reportPanel.textContent, /Trust this dependency snapshot/);
+});
+
+test("an incompatible current dependency snapshot explains why approval is unavailable", async () => {
+  const incompatible = trustedBaselineScan(117, trustedBaselineFixture({
+    approval: { eligible: false, fingerprint: "", reason: "The dependency snapshot schema is incompatible." },
+  }));
+  await renderApp();
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [incompatible] });
+
+  const overviewPanel = document.querySelector(".dependency-trust-overview .trusted-baseline");
+  assert.match(overviewPanel.textContent, /Approval unavailable:.*schema is incompatible/i);
+  assert.doesNotMatch(overviewPanel.textContent, /Trust this snapshot/);
+  await openReports();
+  assert.match(document.querySelector("#reports .trusted-baseline").textContent, /schema is incompatible/i);
+  assert.doesNotMatch(document.querySelector("#reports .trusted-baseline").textContent, /Trust this dependency snapshot/);
 });
 
 test("trusted baseline replacement and clearing require confirmation and refresh history", async () => {

@@ -1054,7 +1054,7 @@ export function App() {
               <section className="dashboard-grid">
                 <OverallRiskPanel report={displayedReport} result={displayedScan} trustProfile={trustProfile} />
                 <FindingsOverview report={displayedReport} result={displayedScan} />
-                {displayedScan ? <DependencyTrustPanel trust={displayedReport.dependencyTrust} findings={displayedReport.dependencyFindings} trustContext={displayedTrustContext} scan={displayedScan} viewMode={scanViewMode} compact /> : null}
+                {displayedScan ? <DependencyTrustPanel trust={displayedReport.dependencyTrust} findings={displayedReport.dependencyFindings} trustContext={displayedTrustContext} scan={displayedScan} viewMode={scanViewMode} compact trustedBaselineMutation={trustedBaselineMutation} onApproveTrustedBaseline={approveTrustedBaseline} onUpdateTrustedBaselineNote={updateTrustedBaselineNote} onClearTrustedBaseline={clearTrustedBaseline} onManageTrustedBaseline={() => { setSelectedSection("reports"); setMajorSectionOpen("scanReport", true); }} /> : null}
                 <ProjectExpectationsSummary profile={trustProfile} onEdit={() => setSelectedSection("trustProfiles")} />
                 <RecentActivity changelog={changelog} scans={scanHistory} />
               </section>
@@ -1367,6 +1367,7 @@ function OverallRiskPanel({ report, result, trustProfile }) {
   const risk = result?.overall_risk || "none";
   const coverageUnknown = !report.completeness.known;
   const reasons = buildRiskReasons(report, risk);
+  const reasonTone = overallRiskReasonTone(report, risk);
   const metrics = [
     ["Unresolved findings", report.reviewSummary.unreviewedFindingCount],
     ["Reviewed findings", report.reviewSummary.reviewedFindingCount],
@@ -1402,9 +1403,15 @@ function OverallRiskPanel({ report, result, trustProfile }) {
           </div>
           <ul>
             {reasons.slice(0, 4).map((reason) => (
-              <li key={reason}>{reason}</li>
+              <li className={`risk-indicator risk-indicator-${reasonTone}`} key={reason}>
+                <span className="risk-indicator-symbol" aria-hidden="true">{riskIndicatorSymbol(reasonTone)}</span>
+                <span>{reason}</span>
+              </li>
             ))}
-            <li>Risk tolerance: {trustProfile.riskTolerance || "normal"}</li>
+            <li className="risk-indicator risk-indicator-neutral">
+              <span className="risk-indicator-symbol" aria-hidden="true">{riskIndicatorSymbol("neutral")}</span>
+              <span>Risk tolerance: {trustProfile.riskTolerance || "normal"}</span>
+            </li>
           </ul>
         </div>
       </div>
@@ -1700,7 +1707,7 @@ function ScanCompletenessSummary({ completeness, viewMode, isScanning, onRunScan
   );
 }
 
-function DependencyTrustPanel({ trust, findings, trustContext, scan, viewMode = "latest", compact = false, onReviewFinding, onReopenFinding, findingReviewState = {}, trustedBaselineMutation = {}, onApproveTrustedBaseline, onUpdateTrustedBaselineNote, onClearTrustedBaseline }) {
+function DependencyTrustPanel({ trust, findings, trustContext, scan, viewMode = "latest", compact = false, onReviewFinding, onReopenFinding, findingReviewState = {}, trustedBaselineMutation = {}, onApproveTrustedBaseline, onUpdateTrustedBaselineNote, onClearTrustedBaseline, onManageTrustedBaseline }) {
   const directEntries = trust.entries.filter((entry) => entry.direct);
   const visibleFindings = findings.slice(0, 50);
   const noSupportedMetadata = dependencyTrustHasNoSupportedMetadata(trust);
@@ -1719,7 +1726,7 @@ function DependencyTrustPanel({ trust, findings, trustContext, scan, viewMode = 
         <span className="dependency-status">{dependencyStatusLabel(trust)}</span>
       </div>
       <p className="muted dependency-state-description">{dependencyStatusDescription(trust)}</p>
-      <TrustedDependencyBaselinePanel baseline={trust.trustedBaseline} scan={scan} viewMode={viewMode} compact={compact} mutation={trustedBaselineMutation} onApprove={onApproveTrustedBaseline} onUpdateNote={onUpdateTrustedBaselineNote} onClear={onClearTrustedBaseline} />
+      <TrustedDependencyBaselinePanel baseline={trust.trustedBaseline} scan={scan} viewMode={viewMode} compact={compact} mutation={trustedBaselineMutation} onApprove={onApproveTrustedBaseline} onUpdateNote={onUpdateTrustedBaselineNote} onClear={onClearTrustedBaseline} onManage={onManageTrustedBaseline} />
       {compact ? (
         trust.available && !noSupportedMetadata ? (
           <div className="dependency-overview-counts">
@@ -1792,11 +1799,23 @@ function DependencyTrustPanel({ trust, findings, trustContext, scan, viewMode = 
   );
 }
 
-function TrustedDependencyBaselinePanel({ baseline, scan, viewMode, compact, mutation, onApprove, onUpdateNote, onClear }) {
+function TrustedDependencyBaselinePanel({ baseline, scan, viewMode, compact, mutation, onApprove, onUpdateNote, onClear, onManage }) {
   const [editingNote, setEditingNote] = useState(false);
   const [note, setNote] = useState(baseline.note || "");
   const comparison = baseline.comparison;
-  const canMutate = !compact && onApprove && onUpdateNote && onClear;
+  const approvalEligible = viewMode === "latest" && baseline.approval.eligible;
+  const canUseFullActions = !compact && onApprove && onUpdateNote && onClear;
+  const historicalReason = "Historical scans cannot replace the active baseline. View the latest eligible scan to approve a snapshot.";
+  const unavailableReason = viewMode === "history"
+    ? baseline.approval.eligible || !baseline.approval.reason
+      ? historicalReason
+      : `${baseline.approval.reason} ${historicalReason}`
+    : baseline.approval.reason || "This scan is not eligible.";
+  const summary = baseline.configured
+    ? comparison.explanation || "The active trusted baseline could not be compared with this scan."
+    : approvalEligible
+      ? "Approve this dependency snapshot to detect future drift."
+      : `Approval unavailable: ${unavailableReason}`;
 
   useEffect(() => {
     setNote(baseline.note || "");
@@ -1808,11 +1827,11 @@ function TrustedDependencyBaselinePanel({ baseline, scan, viewMode, compact, mut
       <div className="trusted-baseline-heading">
         <div>
           <h4>Trusted Dependency Baseline</h4>
-          <p>{baseline.configured ? "Explicit project-scoped dependency snapshot." : "No trusted baseline configured."}</p>
+          <p>{baseline.configured ? "Explicit project-scoped dependency snapshot." : "Project-scoped dependency drift reference."}</p>
         </div>
         <span className={`dependency-status trusted-baseline-status status-${comparison.status}`}>{trustedBaselineComparisonLabel(comparison.status)}</span>
       </div>
-      <p className="muted">{comparison.explanation || "No trusted dependency baseline is configured."}</p>
+      <p className="muted trusted-baseline-summary">{summary}</p>
       {baseline.configured && baseline.valid ? (
         <div className="trusted-baseline-metadata">
           <span>Approved {formatDate(baseline.createdAt)}</span>
@@ -1833,18 +1852,28 @@ function TrustedDependencyBaselinePanel({ baseline, scan, viewMode, compact, mut
         </details>
       ) : null}
       {viewMode === "history" ? <p className="muted">This historical evidence is unchanged. Changing the active baseline can change the comparison shown here.</p> : null}
-      {canMutate ? (
+      {compact ? (
+        <div className="trusted-baseline-actions trusted-baseline-compact-actions">
+          {!baseline.configured && approvalEligible && onApprove ? (
+            <button type="button" onClick={() => onApprove(scan, false, "")} disabled={mutation.saving}>{mutation.saving ? "Saving..." : "Trust this snapshot"}</button>
+          ) : null}
+          {baseline.configured && onManage ? <button type="button" className="secondary-button compact-action" onClick={onManage} disabled={mutation.saving}>Manage baseline</button> : null}
+          {mutation.error ? <p className="finding-review-message error">{mutation.error}</p> : null}
+          {mutation.success ? <p className="finding-review-message success">{mutation.success}</p> : null}
+        </div>
+      ) : null}
+      {canUseFullActions ? (
         <div className="trusted-baseline-actions">
-          {!baseline.configured && viewMode === "latest" && baseline.approval.eligible ? (
+          {!baseline.configured && approvalEligible ? (
             <label className="trusted-baseline-approval">
               Optional approval note
               <textarea value={note} onInput={(event) => setNote(event.currentTarget.value)} maxLength="1000" rows="2" disabled={mutation.saving} />
-              <button type="button" onClick={() => onApprove(scan, false, note)} disabled={!baseline.approval.eligible || mutation.saving}>{mutation.saving ? "Saving..." : "Trust this dependency snapshot"}</button>
+              <button type="button" onClick={() => onApprove(scan, false, note)} disabled={mutation.saving}>{mutation.saving ? "Saving..." : "Trust this dependency snapshot"}</button>
             </label>
           ) : null}
           {baseline.configured ? (
             <div className="trusted-baseline-buttons">
-              {viewMode === "latest" && baseline.approval.eligible ? <button type="button" onClick={() => onApprove(scan, true, baseline.note)} disabled={mutation.saving}>{mutation.saving ? "Saving..." : "Replace trusted baseline"}</button> : null}
+              {approvalEligible ? <button type="button" onClick={() => onApprove(scan, true, baseline.note)} disabled={mutation.saving}>{mutation.saving ? "Saving..." : "Replace trusted baseline"}</button> : null}
               <button type="button" className="history-view-button" onClick={() => setEditingNote((value) => !value)} disabled={mutation.saving}>Edit note</button>
               <button type="button" className="history-view-button" onClick={onClear} disabled={mutation.saving}>Clear trusted baseline</button>
             </div>
@@ -1858,7 +1887,6 @@ function TrustedDependencyBaselinePanel({ baseline, scan, viewMode, compact, mut
               </div>
             </form>
           ) : null}
-          {!baseline.approval.eligible ? <p className="muted baseline-ineligible">Approval unavailable: {baseline.approval.reason || "This scan is not eligible."}</p> : null}
           {mutation.error ? <p className="finding-review-message error">{mutation.error}</p> : null}
           {mutation.success ? <p className="finding-review-message success">{mutation.success}</p> : null}
         </div>
@@ -2557,6 +2585,21 @@ function buildRiskReasons(report, risk) {
 
   if (report.ignoredFiles.length > 0) return ["No scanner findings contributed to risk. Ignored files are neutral by default."];
   return ["No scanner findings contributed to risk."];
+}
+
+function overallRiskReasonTone(report, risk) {
+  if (!report.completeness.known || !report.completeness.complete) return "warning";
+  const unresolved = report.reviewSummary.unreviewedFindingCount > 0;
+  const severity = report.reviewSummary.highestUnreviewedSeverity;
+  if (unresolved && severity === "high") return "high";
+  if (unresolved) return "warning";
+  return risk === "none" ? "success" : "neutral";
+}
+
+function riskIndicatorSymbol(tone) {
+  if (tone === "success") return "✓";
+  if (tone === "neutral") return "•";
+  return "!";
 }
 
 function unknownCoverageMessage(report) {
