@@ -397,7 +397,7 @@ def _create_temporary_file(
     target_name: str,
 ) -> tuple[str, int]:
     for _ in range(_TEMP_ATTEMPTS):
-        temporary_name = f".codexforge-{target_name}-{secrets.token_hex(12)}.tmp"
+        temporary_name = f".glacial-{target_name}-{secrets.token_hex(12)}.tmp"
         try:
             return temporary_name, _open_exclusive(directory_fd, project, temporary_name)
         except FileExistsError:

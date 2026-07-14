@@ -48,7 +48,7 @@ class AgentsWriteTests(unittest.TestCase):
             return main.write_agents(self.payload(overwrite=overwrite))
 
     def temporary_files(self) -> list[Path]:
-        return list(self.project_path.glob(".codexforge-AGENTS.md-*.tmp"))
+        return list(self.project_path.glob(".glacial-AGENTS.md-*.tmp"))
 
     def test_creates_literal_agents_file_when_absent(self) -> None:
         result = self.write_agents()

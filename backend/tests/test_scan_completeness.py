@@ -16,7 +16,7 @@ class ScanCompletenessPersistenceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent)
         self.base_path = Path(self.temporary_directory.name)
-        self.database_path = self.base_path / "codexforge.db"
+        self.database_path = self.base_path / "glacial.db"
         self.project_path = self.base_path / "workspace" / "project"
         self.project_path.mkdir(parents=True)
         self.addCleanup(self.temporary_directory.cleanup)

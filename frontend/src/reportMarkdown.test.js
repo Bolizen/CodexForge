@@ -276,7 +276,7 @@ test("exports complete, incomplete, and unknown scan coverage conservatively", (
   assert.match(complete, /No lockfiles found\./);
   assert.match(complete, /No package lifecycle scripts found\./);
   assert.match(complete, /No secret-looking files found\./);
-  assert.match(complete, /No files ignored by \.codexforgeignore\./);
+  assert.match(complete, /No files ignored by \.glacialignore\./);
   assert.doesNotMatch(complete, /coverage (?:unknown|incomplete)/i);
 
   const older = buildScanReportMarkdown(scanResult([]), emptyReport, {
@@ -348,7 +348,7 @@ test("exports dependency trust summaries, changes, limitations, and detailed evi
   assert.match(markdown, /alpha\\\|tool/);
   assert.match(markdown, /analysis-status-changed: `incomplete` \(previously `complete`\)/);
   assert.match(markdown, /lockfile-added: `locks\/\[prod\]\|package-lock\.json`/);
-  assert.match(markdown, /Offline-only: CodexForge did not contact registries/);
+  assert.match(markdown, /Offline-only: Glacial did not contact registries/);
   assert.equal(markdown.match(/- Type: `dependency-integrity-changed`/g)?.length, 1);
   assert.doesNotMatch(markdown, /undefined|null|\[object Object\]/);
 });

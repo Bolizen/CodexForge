@@ -1,15 +1,15 @@
-# CodexForge
+# Glacial
 
-CodexForge is a local-first safety dashboard for reviewing Codex and AI-generated coding projects before running anything in a development environment.
+Glacial is a local-first safety dashboard for reviewing Codex and AI-generated coding projects before running anything in a development environment.
 
 It is designed to read project metadata and scan files without executing project code, package scripts, installers, or shell files.
 
-## Why CodexForge Exists
-AI coding agents are more useful when generated work is easy to review before execution. CodexForge keeps project access local, scoped, and reviewable while surfacing scanner findings, project metadata, notes, and AGENTS.md instructions in one dashboard.
+## Why Glacial Exists
+AI coding agents are more useful when generated work is easy to review before execution. Glacial keeps project access local, scoped, and reviewable while surfacing scanner findings, project metadata, notes, and AGENTS.md instructions in one dashboard.
 
 # Current Status
 
-CodexForge is an early stage local-first project focused on project scanning, safety review, and safe AGENTS.md generation.
+Glacial is an early stage local-first project focused on project scanning, safety review, and safe AGENTS.md generation.
 
 ## Licensing
 
@@ -22,11 +22,11 @@ Licensing terms have not yet been selected. No permission for reuse, redistribut
 - Frontend: React + Vite
 - Backend: Python FastAPI
 - Database: SQLite
-- Default workspace root: `~/CodexForgeProjects`
+- Default workspace root: `~/GlacialProjects`
 
 ## Safety Model
 
-- CodexForge runs locally only.
+- Glacial runs locally only.
 - It does not add telemetry or cloud services.
 - Scans only read files.
 - It never runs package scripts, project commands, installers, or scanned project code.
@@ -40,8 +40,8 @@ Clone the repository and open two terminals from the repo root.
 Clean-room setup and verification have been completed with Python 3.13.13, Node.js 24.16.0, and npm 11.13.0. These are verified versions, not declared minimum-version guarantees.
 
 ```bash
-git clone <repo-url>
-cd CodexForge
+git clone <repo-url> Glacial
+cd Glacial
 ```
 
 ### Backend
@@ -96,10 +96,10 @@ $env:VITE_API_BASE_URL = "http://127.0.0.1:8010"
 npm.cmd run dev
 ```
 
-The backend accepts browser requests from `http://127.0.0.1:5173` and `http://localhost:5173` by default. Set `CODEXFORGE_CORS_ORIGINS` to a comma-separated list of explicit HTTP or HTTPS origins when the frontend uses other origins. Wildcards, credentials, paths, queries, and fragments are rejected.
+The backend accepts browser requests from `http://127.0.0.1:5173` and `http://localhost:5173` by default. Set `GLACIAL_CORS_ORIGINS` to a comma-separated list of explicit HTTP or HTTPS origins when the frontend uses other origins. Wildcards, credentials, paths, queries, and fragments are rejected.
 
 ```powershell
-$env:CODEXFORGE_CORS_ORIGINS = "http://127.0.0.1:5174,http://localhost:5174"
+$env:GLACIAL_CORS_ORIGINS = "http://127.0.0.1:5174,http://localhost:5174"
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
@@ -107,10 +107,10 @@ The documented default ports remain `8000` for the backend and `5173` for the fr
 
 ## Notes
 
-- CodexForge stores its SQLite database at `backend/data/codexforge.db`.
-- The default workspace root is `~/CodexForgeProjects`. You can configure a different absolute workspace root in the app.
+- Glacial stores its SQLite database at `backend/data/glacial.db`.
+- The default workspace root is `~/GlacialProjects`. You can configure a different absolute workspace root in the app.
 - Settings validates workspace-root changes through the backend. Changing roots clears visible project state but never moves or deletes project folders.
-- Project descriptions and project types can be edited from the Projects screen. Unregister removes CodexForge database records only; project files remain untouched, including when the registered folder is unavailable.
+- Project descriptions and project types can be edited from the Projects screen. Unregister removes Glacial database records only; project files remain untouched, including when the registered folder is unavailable.
 - Registered folders that are missing or unsafe remain visible with an unavailable status so they can be unregistered.
 - Active scans disable duplicate submissions and show a scanning state. Backend reachability is checked at startup and can be retried without polling.
 - Projects with no scan are labelled `Not scanned`; risk and scan-coverage status are displayed separately.
@@ -119,9 +119,9 @@ The documented default ports remain `8000` for the backend and `5173` for the fr
 - Creating a project will create the configured workspace root folder if needed.
 - The scanner dashboard groups scan results by overall risk, manifests, lockfiles, lifecycle scripts, secret findings, executable files, zone/metadata findings, reviewed files, and ignored files.
 - Dependency Trust performs bounded structural and heuristic inspection of local Node metadata (`package.json`, npm lock/shrinkwrap versions 1-3) and Python metadata (`requirements*.txt`, `requirements/*.txt`, `pyproject.toml`, `poetry.lock`, `Pipfile`, and `Pipfile.lock`). It reports locally supportable manifest/lock consistency, source types and safe host names, integrity coverage, install-script indicators present in npm locks, and changes from the newest compatible scan of the same project. npm v1 root/group evidence is limited, and common requirements/PEP 621/Poetry/Pipenv syntax is recognized without claiming full semver, PEP 508, or package-manager resolution. Pyproject build requirements and dependency groups, non-npm lock formats, workspace graphs, and unsupported requirements options are disclosed as incomplete rather than normalized as an empty or clean dependency set.
-- A complete supported dependency snapshot can be explicitly approved as the project’s trusted dependency baseline. CodexForge never creates or replaces this baseline automatically; later current and historical scans compare against the active baseline separately from previous-scan comparison. Approval does not claim that packages are safe or malware-free.
+- A complete supported dependency snapshot can be explicitly approved as the project’s trusted dependency baseline. Glacial never creates or replaces this baseline automatically; later current and historical scans compare against the active baseline separately from previous-scan comparison. Approval does not claim that packages are safe or malware-free.
 - Trusted baseline fingerprints use a versioned `cfdb1_` SHA-256 identity over bounded, deterministically ordered dependency-analysis schema data, project-relative manifest and lockfile identities, package-manager metadata, and normalized dependency specifications, versions, safe source identities, integrity values, and relevant flags. Timestamps, display wording, scan findings, review state, prior-scan comparisons, absolute paths, credentials, URL queries, and fragments are excluded.
-- Dependency analysis is offline and evidence-limited: custom registries, local paths, VCS sources, URLs, unpinned specifications, and metadata changes are review prompts rather than malware verdicts. CodexForge does not contact registries, evaluate package reputation, install dependencies, inspect installed dependency code, or execute project code.
+- Dependency analysis is offline and evidence-limited: custom registries, local paths, VCS sources, URLs, unpinned specifications, and metadata changes are review prompts rather than malware verdicts. Glacial does not contact registries, evaluate package reputation, install dependencies, inspect installed dependency code, or execute project code.
 - Unsupported, malformed, unsafe, unreadable, or oversized dependency inputs are disclosed as unavailable or incomplete analysis and participate in scan completeness. Older scan history remains readable with Dependency Trust shown as unavailable rather than clean.
 - The "Why this risk?" explanation uses existing scan metadata and findings: LOW risk can call out reassuring signals such as no lifecycle scripts, no secret-looking files, no executables, and reviewed manifests or lockfiles; MEDIUM/HIGH risk summarizes contributing finding types.
 - Recent scans are stored locally in SQLite as compact metadata: timestamp, overall risk, finding count, reviewed file count, ignored file count, finding-type summary, and risk-change marker.
@@ -133,12 +133,12 @@ The documented default ports remain `8000` for the backend and `5173` for the fr
 - Scan results distinguish complete coverage, incomplete coverage with inspection-issue counts, and older scans whose coverage is unknown. A file is counted as reviewed only after its intended filename-only or content inspection succeeds; ignored and safely rejected linked paths are not reviewed.
 - Older scan rows may show unavailable or zero metadata for fields added after those scans were created. Scan history does not store full file contents.
 - Findings are review prompts, not proof of compromise, and the scanner is not a malware detector.
-- `.codexforgeignore` can suppress known-safe local or self-referential scanner noise. Ignored files are treated neutrally, not as suspicious by default.
+- `.glacialignore` can suppress known-safe local or self-referential scanner noise. Ignored files are treated neutrally, not as suspicious by default.
 - The AGENTS.md generator previews Markdown before writing. Existing AGENTS.md files require explicit overwrite confirmation.
 
 ## Manual Test Notes
 
-Use a small throwaway project folder under `<workspace-root>` for these checks, such as `~/CodexForgeProjects/<project-name>`.
+Use a small throwaway project folder under `<workspace-root>` for these checks, such as `~/GlacialProjects/<project-name>`.
 
 1. Create a project:
    - Start the backend and frontend.

@@ -203,7 +203,7 @@ export function buildScanReportMarkdown(result, report, comparison, trustContext
     "## Ignored files",
     formatMarkdownGuidance(SCAN_GUIDANCE.ignoredFiles),
     "",
-    formatPathMetadataList(report?.ignoredFiles, report?.ignoredFileCount, coverageAwareEmptyText(completeness, "No files ignored by .codexforgeignore.", "No ignored files recorded in this scan")),
+    formatPathMetadataList(report?.ignoredFiles, report?.ignoredFileCount, coverageAwareEmptyText(completeness, "No files ignored by .glacialignore.", "No ignored files recorded in this scan")),
     "",
     "## Reviewed files",
     formatMarkdownGuidance(SCAN_GUIDANCE.reviewedFiles),
@@ -340,7 +340,7 @@ function formatDependencyTrust(value, findings) {
       trust.comparison.fileChanges[key].forEach((path) => lines.push(`- ${label}: ${inlineCode(path)}`));
     });
   }
-  lines.push("", "Offline-only: CodexForge did not contact registries, evaluate package reputation, install dependencies, inspect installed dependency code, or execute project code.");
+  lines.push("", "Offline-only: Glacial did not contact registries, evaluate package reputation, install dependencies, inspect installed dependency code, or execute project code.");
   return lines.join("\n");
 }
 

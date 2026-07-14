@@ -43,7 +43,7 @@ CHANGELOG_ENTRIES = [
         "changes": [
             "Grouped scan results into overall risk, manifests, lockfiles, lifecycle scripts, secret findings, executable files, and zone/metadata sections.",
             "Added expandable reviewed and ignored file details near the scan summary.",
-            "Added .codexforgeignore support for known-safe local scanner noise; ignored files are neutral, not suspicious by default.",
+            "Added .glacialignore support for known-safe local scanner noise; ignored files are neutral, not suspicious by default.",
         ],
     },
     {

@@ -139,7 +139,7 @@ class FindingReviewApiTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent)
         self.addCleanup(temporary.cleanup)
         self.base = Path(temporary.name)
-        self.database_path = self.base / "codexforge.db"
+        self.database_path = self.base / "glacial.db"
         self.root = self.base / "workspace"
         self.root.mkdir()
         self.project = self.root / "project"

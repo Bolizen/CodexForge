@@ -1,4 +1,4 @@
-export const SESSION_STATE_KEY = "codexforge.ui-state.v1";
+export const SESSION_STATE_KEY = "glacial.ui-state.v1";
 export const SESSION_STATE_VERSION = 1;
 
 export const VALID_SECTIONS = Object.freeze([

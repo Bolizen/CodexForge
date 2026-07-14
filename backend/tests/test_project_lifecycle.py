@@ -20,7 +20,7 @@ class ProjectLifecycleTests(unittest.TestCase):
         self.temporary_directory = tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent)
         self.addCleanup(self.temporary_directory.cleanup)
         self.base = Path(self.temporary_directory.name)
-        self.database_path = self.base / "codexforge.db"
+        self.database_path = self.base / "glacial.db"
         self.root = self.base / "workspace"
         self.root.mkdir()
         self.project = self.root / "project"

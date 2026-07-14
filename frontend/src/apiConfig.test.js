@@ -10,5 +10,5 @@ test("API base URL defaults to the local backend", () => {
 
 test("API base URL accepts a configured value without duplicate separators", () => {
   assert.equal(resolveApiBaseUrl("  http://127.0.0.1:8010///  "), "http://127.0.0.1:8010");
-  assert.equal(resolveApiBaseUrl("https://codexforge.example.test/api"), "https://codexforge.example.test/api");
+  assert.equal(resolveApiBaseUrl("https://glacial.example.test/api"), "https://glacial.example.test/api");
 });

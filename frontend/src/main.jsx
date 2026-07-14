@@ -858,7 +858,7 @@ export function App() {
 
   async function unregisterProject(project) {
     const confirmed = window.confirm(
-      `Unregister ${project.name} (${project.path}) from CodexForge? Project files and folders will remain untouched.`,
+      `Unregister ${project.name} (${project.path}) from Glacial? Project files and folders will remain untouched.`,
     );
     if (!confirmed) return;
     const requestId = unregisterRequestRef.current + 1;
@@ -960,7 +960,7 @@ export function App() {
         <div className="brand-block">
           <div className="brand-mark">CF</div>
           <div>
-            <h1>CodexForge</h1>
+            <h1>Glacial</h1>
             <p>Local Project Scanner</p>
           </div>
         </div>
@@ -1472,7 +1472,7 @@ function RecentActivity({ changelog, scans }) {
       <div className="panel-heading">
         <div>
           <h2>Changelog / Recent Activity</h2>
-          <p className="muted">What changed in CodexForge and recent local scan activity.</p>
+          <p className="muted">What changed in Glacial and recent local scan activity.</p>
         </div>
       </div>
       <div className="activity-list">
@@ -1599,7 +1599,7 @@ function ScanReport({ result, report, comparison, trustContext, viewMode, isScan
           <TrustProfileContext context={trustContext} />
           <div className="scan-detail-toggles">
             <PathDetails title="Reviewed files" items={report.reviewedFiles} recordedCount={report.reviewedFileCount} emptyText="No reviewed files recorded for this scan." guidance={SCAN_GUIDANCE.reviewedFiles} />
-            <PathDetails title="Ignored files" items={report.ignoredFiles} recordedCount={report.ignoredFileCount} emptyText="No files ignored by .codexforgeignore." guidance={SCAN_GUIDANCE.ignoredFiles} />
+            <PathDetails title="Ignored files" items={report.ignoredFiles} recordedCount={report.ignoredFileCount} emptyText="No files ignored by .glacialignore." guidance={SCAN_GUIDANCE.ignoredFiles} />
           </div>
         </>
       ) : null}
@@ -1792,7 +1792,7 @@ function DependencyTrustPanel({ trust, findings, trustContext, scan, viewMode = 
             {!findings.length ? <p className="muted">No dependency findings recorded.</p> : null}
             {findings.length > visibleFindings.length ? <p className="muted">{findings.length - visibleFindings.length} additional dependency findings are summarized in the counts.</p> : null}
           </details>
-          <p className="review-note">Offline-only: CodexForge does not contact registries, score package reputation, install dependencies, inspect installed package code, or execute project code.</p>
+          <p className="review-note">Offline-only: Glacial does not contact registries, score package reputation, install dependencies, inspect installed package code, or execute project code.</p>
         </>
       )}
     </section>

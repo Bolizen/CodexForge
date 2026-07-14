@@ -4,7 +4,7 @@
 - Treat all user-provided paths as untrusted input.
 - Resolve and normalize paths before writing files.
 - Reject path traversal attempts such as `../`, `..\\`, absolute paths, symlinks, junctions, or paths that escape the selected project root.
-- Only allow CodexForge to create or overwrite `AGENTS.md` in the selected project root unless a future feature explicitly requires otherwise.
+- Only allow Glacial to create or overwrite `AGENTS.md` in the selected project root unless a future feature explicitly requires otherwise.
 - Always require explicit user confirmation before overwriting an existing `AGENTS.md`.
 - Never read, print, log, commit, or expose secrets, tokens, API keys, `.env` files, SSH keys, cookies, browser data, or credential files.
 - Never add real secrets to examples, tests, README files, or fixtures.
@@ -38,9 +38,9 @@
 
 
 
-## CodexForge Golden Rule
+## Glacial Golden Rule
 
-CodexForge is allowed to generate and write project instructions, not to become a general-purpose filesystem gremlin. Keep file writes narrowly scoped, predictable, and reviewable.
+Glacial is allowed to generate and write project instructions, not to become a general-purpose filesystem gremlin. Keep file writes narrowly scoped, predictable, and reviewable.
 
 
 

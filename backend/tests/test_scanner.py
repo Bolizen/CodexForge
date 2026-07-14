@@ -113,7 +113,7 @@ class ScannerLinkedPathTests(unittest.TestCase):
         )
 
     def test_ignored_linked_file_still_produces_a_finding(self) -> None:
-        (self.project_path / ".codexforgeignore").write_text(
+        (self.project_path / ".glacialignore").write_text(
             "ignored-link.txt\n",
             encoding="utf-8",
         )
@@ -183,7 +183,7 @@ class ScannerLinkedPathTests(unittest.TestCase):
         )
 
     def test_linked_ignore_file_is_reported_and_not_used(self) -> None:
-        linked_ignore = self.project_path / ".codexforgeignore"
+        linked_ignore = self.project_path / ".glacialignore"
         linked_ignore.write_text("payload.txt\n", encoding="utf-8")
         (self.project_path / "payload.txt").write_text(
             "eval(untrusted_input)",
@@ -192,8 +192,8 @@ class ScannerLinkedPathTests(unittest.TestCase):
 
         result = self.scan_with_linked_paths(linked_ignore)
 
-        self.assert_link_finding(result, ".codexforgeignore")
-        self.assertNotIn(".codexforgeignore", result["reviewedFiles"])
+        self.assert_link_finding(result, ".glacialignore")
+        self.assertNotIn(".glacialignore", result["reviewedFiles"])
         self.assertNotIn("payload.txt", result["ignoredFiles"])
         self.assertIn("payload.txt", result["reviewedFiles"])
 
@@ -201,7 +201,7 @@ class ScannerLinkedPathTests(unittest.TestCase):
         external_ignore = self.base_path / "external-ignore"
         external_ignore.write_text("payload.txt\n", encoding="utf-8")
         try:
-            os.link(external_ignore, self.project_path / ".codexforgeignore")
+            os.link(external_ignore, self.project_path / ".glacialignore")
         except OSError as exc:
             self.skipTest(f"Hardlinks are unavailable: {exc}")
         (self.project_path / "payload.txt").write_text("eval(untrusted_input)", encoding="utf-8")
@@ -209,7 +209,7 @@ class ScannerLinkedPathTests(unittest.TestCase):
         result = scan_project(self.project_path)
 
         self.assertTrue(any(
-            finding["type"] == "hardlink" and finding["path"] == ".codexforgeignore"
+            finding["type"] == "hardlink" and finding["path"] == ".glacialignore"
             for finding in result["findings"]
         ))
         self.assertNotIn("payload.txt", result["ignoredFiles"])
@@ -280,7 +280,7 @@ class ScannerCompletenessTests(unittest.TestCase):
         self.assertTrue(any(finding.get("operation") == "read-file-content" for finding in result["findings"]))
 
     def test_ignore_file_read_error_is_disclosed(self) -> None:
-        ignore_file = self.project_path / ".codexforgeignore"
+        ignore_file = self.project_path / ".glacialignore"
         ignore_file.write_text("payload.txt\n", encoding="utf-8")
         (self.project_path / "payload.txt").write_text("ordinary content", encoding="utf-8")
         original_read_text = Path.read_text
@@ -295,13 +295,13 @@ class ScannerCompletenessTests(unittest.TestCase):
 
         self.assertEqual(result["scanCompleteness"]["fileInspectionFailureCount"], 1)
         self.assertNotIn("payload.txt", result["ignoredFiles"])
-        self.assertNotIn(".codexforgeignore", result["reviewedFiles"])
+        self.assertNotIn(".glacialignore", result["reviewedFiles"])
         self.assertEqual(
             sum(finding.get("operation") == "read-ignore-file" for finding in result["findings"]),
             1,
         )
         self.assertTrue(any(
-            finding.get("operation") == "read-ignore-file" and finding["path"] == ".codexforgeignore"
+            finding.get("operation") == "read-ignore-file" and finding["path"] == ".glacialignore"
             for finding in result["findings"]
         ))
 

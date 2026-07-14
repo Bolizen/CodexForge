@@ -49,7 +49,7 @@ EXECUTABLE_EXTENSIONS = {
     ".dll": ("high", "Windows library file found. Review its origin before loading or executing related software."),
 }
 SKIP_DIRS = {".git", "node_modules", "dist", "build", ".venv", "venv", "__pycache__"}
-IGNORE_FILE_NAME = ".codexforgeignore"
+IGNORE_FILE_NAME = ".glacialignore"
 MAX_TEXT_BYTES = 1024 * 1024
 
 PATTERNS = {
@@ -393,7 +393,7 @@ def _load_ignore_patterns(
             IGNORE_FILE_NAME,
             "filesystem-entry-inspection-error",
             "medium",
-            ".codexforgeignore could not be read, so its ignore rules were not applied.",
+            ".glacialignore could not be read, so its ignore rules were not applied.",
             "Review the ignore file and filesystem permissions before trusting scan coverage.",
             operation="read-ignore-file",
             error=_sanitized_error(error),

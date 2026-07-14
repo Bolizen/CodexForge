@@ -399,7 +399,7 @@ class DependencyTrustPersistenceTests(unittest.TestCase):
         self.root = self.base / "workspace"
         self.project = self.root / "project"
         self.project.mkdir(parents=True)
-        self.database_path = self.base / "codexforge.db"
+        self.database_path = self.base / "glacial.db"
         patches = [
             patch.object(database, "DB_PATH", self.database_path),
             patch.object(database, "get_connection", side_effect=self.connection),

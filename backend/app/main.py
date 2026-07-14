@@ -30,7 +30,7 @@ from .schemas import AgentPreviewRequest, FindingReviewDelete, FindingReviewRequ
 from .trusted_dependency_baseline import BASELINE_SCHEMA_VERSION, BaselineError, approval_for_analysis, enrich_scan as enrich_trusted_baseline, public_baseline, snapshot_from_analysis, snapshot_json, valid_fingerprint as valid_baseline_fingerprint
 
 
-app = FastAPI(title="CodexForge API")
+app = FastAPI(title="Glacial API")
 
 TRUST_PROFILE_FIELDS = (
     "trustedPackageManagers",
@@ -561,7 +561,7 @@ def _ensure_project(project_path: str) -> Path:
     with get_connection() as connection:
         row = connection.execute("SELECT 1 FROM projects WHERE path = ?", (str(project),)).fetchone()
     if not row:
-        raise HTTPException(status_code=404, detail="Project folder is not registered in CodexForge.")
+        raise HTTPException(status_code=404, detail="Project folder is not registered in Glacial.")
     return project
 
 

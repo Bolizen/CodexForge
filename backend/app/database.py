@@ -7,8 +7,8 @@ from typing import Any
 
 
 DB_DIR = Path(__file__).resolve().parent.parent / "data"
-DB_PATH = DB_DIR / "codexforge.db"
-DEFAULT_WORKSPACE_ROOT = str(Path.home() / "CodexForgeProjects")
+DB_PATH = DB_DIR / "glacial.db"
+DEFAULT_WORKSPACE_ROOT = str(Path.home() / "GlacialProjects")
 WORKSPACE_ROOT_SETTING = "project_root"
 
 

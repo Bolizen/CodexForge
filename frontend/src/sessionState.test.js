@@ -74,7 +74,8 @@ test("unavailable storage never throws during read, write, or clear", () => {
   assert.equal(clearSessionState(storage), false);
 });
 
-test("storage helpers modify only the CodexForge session key", () => {
+test("storage helpers modify only the Glacial session key", () => {
+  assert.equal(SESSION_STATE_KEY, "glacial.ui-state.v1");
   const values = new Map([["unrelated", "keep"]]);
   const storage = {
     getItem: (key) => values.get(key) ?? null,

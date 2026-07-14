@@ -2,15 +2,22 @@ from __future__ import annotations
 
 import os
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import CORS_ORIGINS_ENV, DEFAULT_CORS_ORIGINS, allowed_cors_origins
+from app.database import DB_PATH, DEFAULT_WORKSPACE_ROOT
 from app.main import app
 
 
 class CorsConfigurationTests(unittest.TestCase):
+    def test_public_product_configuration_uses_glacial_names(self) -> None:
+        self.assertEqual(CORS_ORIGINS_ENV, "GLACIAL_CORS_ORIGINS")
+        self.assertEqual(DB_PATH.name, "glacial.db")
+        self.assertEqual(Path(DEFAULT_WORKSPACE_ROOT).name, "GlacialProjects")
+
     def test_defaults_and_middleware_use_the_resolved_origins(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(allowed_cors_origins(), list(DEFAULT_CORS_ORIGINS))
