@@ -13,7 +13,11 @@ Glacial is an early stage local-first project focused on project scanning, safet
 
 ## Licensing
 
-Licensing terms have not yet been selected. No permission for reuse, redistribution, modification, or commercial use is presently granted. The `COPYRIGHT.md` file records the current copyright notice and does not state a software license.
+Glacial v0.1.0 is licensed under the Functional Source License, Version 1.1, ALv2 Future License (`FSL-1.1-ALv2`). It is Fair Source and source-available, but it is not presently OSI open source.
+
+Internal use, study, modification, and redistribution are permitted subject to the license. Offering Glacial, or substantially similar functionality, to others as a competing commercial product or service is not permitted under the public license. Separate commercial licensing may be available from the copyright holder.
+
+Each software version becomes available under the Apache License, Version 2.0 on the second anniversary of the date that version was made available. The root `LICENSE` file is authoritative if this summary and the license text ever appear inconsistent.
 
 
 
