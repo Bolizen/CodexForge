@@ -38,12 +38,12 @@ const MAJOR_SECTIONS = ["changelog", "scanReport", "agents", "notes", "history"]
 const OPEN_MAJOR_SECTIONS = Object.fromEntries(MAJOR_SECTIONS.map((section) => [section, true]));
 const PROJECT_REQUIRED_SECTIONS = new Set(["trustProfiles", "reports"]);
 const SECTION_NAV = [
-  { id: "workspace", label: "Workspace Overview", icon: "#" },
-  { id: "projects", label: "Projects", icon: "[]" },
-  { id: "trustProfiles", label: "Trust Profiles", icon: "<>" },
-  { id: "reports", label: "Reports", icon: "=" },
-  { id: "changelog", label: "Changelog", icon: "@" },
-  { id: "settings", label: "Settings", icon: "*" },
+  { id: "workspace", href: "#workspace-overview", label: "Workspace Overview", icon: "#" },
+  { id: "projects", href: "#projects", label: "Projects", icon: "[]" },
+  { id: "trustProfiles", href: "#trust-profiles", label: "Trust Profiles", icon: "<>" },
+  { id: "reports", href: "#reports", label: "Reports", icon: "=" },
+  { id: "changelog", href: "#changelog", label: "Changelog", icon: "@" },
+  { id: "settings", href: "#settings", label: "Settings", icon: "*" },
 ];
 const TRUST_PROFILE_FIELDS = [
   "trustedPackageManagers",
@@ -958,18 +958,17 @@ export function App() {
     <main className="app-shell">
       <aside className="sidebar">
         <div className="brand-block">
-          <div className="brand-mark">CF</div>
           <div>
             <h1>Glacial</h1>
             <p>Local Project Scanner</p>
           </div>
         </div>
 
-        <nav className={`sidebar-nav nav-${selectedSection}`} aria-label="Dashboard navigation" onClick={handleSidebarNav}>
-          {["Workspace Overview", "Projects", "Trust Profiles", "Reports", "Changelog", "Settings"].map((item, index) => (
-            <a className={index === 0 ? "active" : ""} href={`#${item.toLowerCase().replaceAll(" ", "-")}`} key={item}>
-              <span aria-hidden="true">{["⌂", "□", "◇", "▤", "◷", "⚙"][index]}</span>
-              {item}
+        <nav className="sidebar-nav" aria-label="Dashboard navigation" onClick={handleSidebarNav}>
+          {SECTION_NAV.map((item) => (
+            <a className={item.id === selectedSection ? "active" : ""} href={item.href} aria-current={item.id === selectedSection ? "page" : undefined} key={item.id}>
+              <span aria-hidden="true">{item.icon}</span>
+              {item.label}
             </a>
           ))}
         </nav>
@@ -984,14 +983,19 @@ export function App() {
                 className={`project-item ${project.path === selectedPath ? "selected" : ""}`}
                 onClick={() => selectProject(project.path)}
                 disabled={project.available === false}
+                aria-pressed={project.path === selectedPath}
               >
-                <span className="project-name">{project.name}</span>
-                <span className={`risk risk-${project.last_risk_level}`}>{projectFindingRiskLabel(project)}</span>
-                <span className="project-meta">{projectCoverageLabel(project)}</span>
-                <span className="project-path">{project.path}</span>
-                {project.available === false ? <span className="project-meta">Unavailable: {project.availability}</span> : null}
-                <span className="project-meta">{project.notes_count} notes</span>
-                <span className="project-meta scan-time">{formatDate(project.last_scan_time)}</span>
+                <span className="project-card-heading">
+                  <span className="project-name" title={project.name}>{project.name}</span>
+                </span>
+                <span className="project-path" title={project.path}>{project.path}</span>
+                <span className="project-card-meta">
+                  <span className={`risk risk-${project.last_risk_level}`}>{projectFindingRiskLabel(project)}</span>
+                  <span className="project-meta">{projectCoverageLabel(project)}</span>
+                  <span className="project-meta">{project.notes_count} notes</span>
+                  <span className="project-meta scan-time">{formatDate(project.last_scan_time)}</span>
+                </span>
+                {project.available === false ? <span className="project-availability">Unavailable: {project.availability}</span> : null}
               </button>
             ))}
             {!loading && projects.length === 0 ? <p className="muted">No project folders found.</p> : null}
@@ -1018,17 +1022,19 @@ export function App() {
             <h1>{selectedSectionInfo.label}</h1>
             <p>Local project dashboard for reviewing coding work before you run anything.</p>
           </div>
-          <div className="topbar-actions">
-            <button type="button" className="secondary-button" onClick={() => exportScanReport(displayedReportMarkdown)} disabled={!displayedReportMarkdown}>
-              Export Report
-            </button>
-            <button type="button" className="secondary-button" onClick={copyReportMarkdown} disabled={!displayedReportMarkdown}>
-              Copy Markdown
-            </button>
-            <button type="button" className="run-scan-button" onClick={runScan} disabled={!selectedPath || isScanning || selectedProject?.available === false}>
-              {isScanning ? "Scanning..." : "Run Scan"}
-            </button>
-          </div>
+          {selectedSection !== "workspace" ? (
+            <div className="topbar-actions">
+              <button type="button" className="secondary-button" onClick={() => exportScanReport(displayedReportMarkdown)} disabled={!displayedReportMarkdown}>
+                Export Report
+              </button>
+              <button type="button" className="secondary-button" onClick={copyReportMarkdown} disabled={!displayedReportMarkdown}>
+                Copy Markdown
+              </button>
+              <button type="button" className="run-scan-button" onClick={runScan} disabled={!selectedPath || isScanning || selectedProject?.available === false}>
+                {isScanning ? "Scanning..." : "Run Scan"}
+              </button>
+            </div>
+          ) : null}
         </header>
 
         <div className="notice-stack" aria-live="polite" aria-atomic="false" style={{ "--toast-top": `${toastTop}px` }}>
@@ -1050,9 +1056,20 @@ export function App() {
         <section className="content">
           {selectedSection === "workspace" && selectedProject && !projectDetailsLoading ? (
             <>
-              <SummaryCards projects={projects} report={displayedReport} result={displayedScan} comparison={displayedComparison} />
+              <RiskSummaryHero
+                report={displayedReport}
+                result={displayedScan}
+                comparison={displayedComparison}
+                trustProfile={trustProfile}
+                isScanning={isScanning}
+                reportActionsDisabled={!displayedReportMarkdown}
+                runScanDisabled={!selectedPath || isScanning || selectedProject?.available === false}
+                onExport={() => exportScanReport(displayedReportMarkdown)}
+                onCopy={copyReportMarkdown}
+                onRunScan={runScan}
+              />
+              <OverviewSecondarySummary projects={projects} report={displayedReport} result={displayedScan} />
               <section className="dashboard-grid">
-                <OverallRiskPanel report={displayedReport} result={displayedScan} trustProfile={trustProfile} />
                 <FindingsOverview report={displayedReport} result={displayedScan} />
                 {displayedScan ? <DependencyTrustPanel trust={displayedReport.dependencyTrust} findings={displayedReport.dependencyFindings} trustContext={displayedTrustContext} scan={displayedScan} viewMode={scanViewMode} compact trustedBaselineMutation={trustedBaselineMutation} onApproveTrustedBaseline={approveTrustedBaseline} onUpdateTrustedBaselineNote={updateTrustedBaselineNote} onClearTrustedBaseline={clearTrustedBaseline} onManageTrustedBaseline={() => { setSelectedSection("reports"); setMajorSectionOpen("scanReport", true); }} /> : null}
                 <ProjectExpectationsSummary profile={trustProfile} onEdit={() => setSelectedSection("trustProfiles")} />
@@ -1133,31 +1150,104 @@ export function App() {
   );
 }
 
-function SummaryCards({ projects, report, result, comparison }) {
+function RiskSummaryHero({ report, result, comparison, trustProfile, isScanning, reportActionsDisabled, runScanDisabled, onExport, onCopy, onRunScan }) {
   const hasScan = Boolean(result);
   const completeness = report.completeness;
   const reviewSummary = report.reviewSummary;
-  const cards = [
-    { label: "Raw Risk", value: hasScan ? formatRiskLabel(result.overall_risk) : "NOT SCANNED", detail: hasScan ? "Original scanner severity" : "Run the first scan", icon: "◇", risk: result?.overall_risk || "none" },
-    { label: "Projects", value: projects.length, detail: "In this workspace", icon: "▣" },
-    { label: "Findings", value: hasScan ? report.totalFindings : "N/A", detail: hasScan ? `${reviewSummary.unreviewedFindingCount} unresolved · ${reviewSummary.reviewedFindingCount} reviewed` : "Project has not been scanned", icon: "⌕" },
-    { label: "Unreviewed Risk", value: hasScan ? formatRiskLabel(reviewSummary.highestUnreviewedSeverity) : "N/A", detail: hasScan ? "Highest unresolved severity" : "Project has not been scanned", icon: "△", risk: hasScan ? reviewSummary.highestUnreviewedSeverity : "none" },
-    { label: "Last Scan", value: formatDate(result?.scan_date), detail: result ? coverageLabel(completeness) : "Never scanned", icon: "◷" },
-    { label: "Changed Since Last Scan", value: hasScan ? (comparison?.riskChange || "No previous scan") : "NOT SCANNED", detail: hasScan ? (comparison?.findingDelta || "Baseline not established") : "Run the first scan", icon: "▤" },
-    { label: "Scan Coverage", value: hasScan ? coverageLabel(completeness) : "NOT SCANNED", detail: hasScan ? coverageDetail(completeness) : "Run the first scan", icon: "?", risk: hasScan && !completeness.complete ? "medium" : "none" },
+  const risk = result?.overall_risk || "none";
+  const coverageUnknown = hasScan && !completeness.known;
+  const reasons = hasScan ? buildRiskReasons(report, risk) : [];
+  const reasonTone = hasScan ? overallRiskReasonTone(report, risk) : "neutral";
+  const riskLabel = hasScan ? formatRiskLabel(risk) : "NOT SCANNED";
+  const findingLabel = hasScan ? report.totalFindings : "—";
+  const context = [
+    { label: "Raw risk", value: riskLabel, detail: hasScan ? "Original scanner severity" : "Run the first scan", risk: hasScan ? risk : "none" },
+    { label: "Highest unreviewed", value: hasScan ? formatRiskLabel(reviewSummary.highestUnreviewedSeverity) : "N/A", detail: "Highest unresolved severity", risk: hasScan ? reviewSummary.highestUnreviewedSeverity : "none" },
+    { label: "Scan coverage", value: hasScan ? coverageLabel(completeness) : "NOT SCANNED", detail: hasScan ? coverageDetail(completeness) : "Coverage unavailable", risk: hasScan && !completeness.complete ? "medium" : "none" },
+    { label: "Finding count", value: hasScan ? report.totalFindings : "N/A", detail: hasScan ? `${reviewSummary.unreviewedFindingCount} unresolved · ${reviewSummary.reviewedFindingCount} reviewed` : "No scan data" },
+    { label: "Change since last scan", value: hasScan ? (comparison?.riskChange || "No previous scan") : "NOT SCANNED", detail: hasScan ? (comparison?.findingDelta || "Baseline not established") : "Run the first scan" },
+    { label: "Risk tolerance", value: trustProfile.riskTolerance || "normal", detail: "Project review setting" },
   ];
 
   return (
-    <section className="summary-cards">
-      {cards.map((card) => (
-        <article className="summary-card" key={card.label}>
-          <span className="summary-icon">{card.icon}</span>
-          <div>
-            <span className="summary-label">{card.label}</span>
-            <strong className={card.risk ? `summary-value risk-text-${card.risk}` : "summary-value"}>{card.value}</strong>
-            <small>{card.detail}</small>
+    <section className={`panel overall-risk-panel risk-summary-hero${coverageUnknown ? " coverage-unknown" : ""}`} aria-labelledby="risk-summary-title">
+      <div className="risk-summary-graphic">
+        <span className="risk-summary-eyebrow">Current project risk</span>
+        <div className={`risk-ring risk-ring-${hasScan ? (coverageUnknown ? "unknown" : risk) : "unknown"}`} aria-hidden="true">
+          <strong>{riskLabel}</strong>
+          <span>{findingLabel}</span>
+          <small>{report.totalFindings === 1 ? "Finding" : "Findings"}</small>
+        </div>
+        <p className="risk-ring-caption">Risk level: <strong>{riskLabel}</strong> · {hasScan ? `${report.totalFindings} ${report.totalFindings === 1 ? "finding" : "findings"}` : "finding count unavailable"}</p>
+      </div>
+
+      <div className="risk-summary-content">
+        <div className="risk-summary-heading">
+          <span className="risk-summary-eyebrow">Risk summary</span>
+          <h2 id="risk-summary-title">Current scanner result</h2>
+          <p>{hasScan ? riskSummaryText(report, risk) : "Run the first scan to calculate risk and review project findings."}</p>
+        </div>
+
+        <dl className="risk-context-grid">
+          {context.map((item) => (
+            <div key={item.label}>
+              <dt>{item.label}</dt>
+              <dd className={item.risk ? `risk-text-${item.risk}` : undefined}>{item.value}</dd>
+              <p>{item.detail}</p>
+            </div>
+          ))}
+        </dl>
+
+        {hasScan ? (
+          <div className="risk-reasons">
+            <ul>
+              {reasons.slice(0, 4).map((reason) => (
+                <li className={`risk-indicator risk-indicator-${reasonTone}`} key={reason}>
+                  <span className="risk-indicator-symbol" aria-hidden="true">{riskIndicatorSymbol(reasonTone)}</span>
+                  <span>{reason}</span>
+                </li>
+              ))}
+              <li className="risk-indicator risk-indicator-neutral">
+                <span className="risk-indicator-symbol" aria-hidden="true">{riskIndicatorSymbol("neutral")}</span>
+                <span>Risk tolerance: {trustProfile.riskTolerance || "normal"}</span>
+              </li>
+            </ul>
           </div>
-        </article>
+        ) : null}
+
+        <div className="risk-summary-actions">
+          <button type="button" className="run-scan-button" onClick={onRunScan} disabled={runScanDisabled}>
+            {isScanning ? "Scanning..." : "Run Scan"}
+          </button>
+          <button type="button" className="secondary-button" onClick={onExport} disabled={reportActionsDisabled}>Export Report</button>
+          <button type="button" className="secondary-button" onClick={onCopy} disabled={reportActionsDisabled}>Copy Markdown</button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function OverviewSecondarySummary({ projects, report, result }) {
+  const hasScan = Boolean(result);
+  const reviewSummary = report.reviewSummary;
+  const metrics = [
+    ["Projects", projects.length],
+    ["Last scan", formatDate(result?.scan_date)],
+    ["Unresolved", hasScan ? reviewSummary.unreviewedFindingCount : "N/A"],
+    ["Reviewed", hasScan ? reviewSummary.reviewedFindingCount : "N/A"],
+    ["Reviewed files", hasScan ? report.reviewedFileCount : "N/A"],
+    ["Ignored files", hasScan ? report.ignoredFileCount : "N/A"],
+    ["Manifests", hasScan ? report.manifests.length : "N/A"],
+    ["Lockfiles", hasScan ? report.lockfiles.length : "N/A"],
+  ];
+
+  return (
+    <section className="overview-secondary-summary" aria-label="Workspace scan summary">
+      {metrics.map(([label, value]) => (
+        <div key={label}>
+          <span>{label}</span>
+          <strong>{value}</strong>
+        </div>
       ))}
     </section>
   );
@@ -1172,7 +1262,7 @@ function CreateProjectModal({ form, setForm, onSubmit, onRegister, onClose }) {
             <h2 id="new-project-title">Add Project</h2>
             <p className="muted">Register an existing folder or create a new folder inside the workspace root.</p>
           </div>
-          <button type="button" className="secondary-button modal-close" onClick={onClose}>Close</button>
+          <button type="button" className="tertiary-button modal-close" onClick={onClose}>Close</button>
         </div>
         <form onSubmit={onRegister} className="stack project-action-form">
           <h3>Add Existing Folder</h3>
@@ -1186,7 +1276,7 @@ function CreateProjectModal({ form, setForm, onSubmit, onRegister, onClose }) {
           <input value={form.project_name} onChange={(event) => setForm({ ...form, project_name: event.target.value })} placeholder="Project name" required />
           <input value={form.project_type} onChange={(event) => setForm({ ...form, project_type: event.target.value })} placeholder="Project type" />
           <textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="Description" rows="3" />
-          <button type="submit">Create New Folder</button>
+          <button type="submit" className="secondary-button">Create New Folder</button>
         </form>
       </section>
     </div>
@@ -1221,12 +1311,12 @@ function ProjectsSection({ projects, selectedPath, onSelectProject, onNewProject
             <span>Action</span>
           </div>
           {projects.map((project) => (
-            <div className="projects-table-row" key={project.path}>
+            <div className={`projects-table-row${selectedPath === project.path ? " selected" : ""}`} key={project.path}>
               <div className="project-identity">
                 <strong>{project.name}</strong>
                 {project.project_type ? <small>{project.project_type}</small> : null}
                 {project.description ? <small>{project.description}</small> : null}
-                <span>{project.path}</span>
+                <span title={project.path}>{project.path}</span>
                 {project.available === false ? <small>Unavailable: {project.availability}</small> : null}
               </div>
               <span className="project-risk-cell">
@@ -1239,7 +1329,7 @@ function ProjectsSection({ projects, selectedPath, onSelectProject, onNewProject
                 <button type="button" className="history-view-button" onClick={() => onSelectProject(project.path)} disabled={project.available === false}>
                   {selectedPath === project.path ? "Selected" : "Select"}
                 </button>
-                <button type="button" className="history-view-button" onClick={() => onUnregister(project)} disabled={Boolean(unregisteringPath)}>
+                <button type="button" className="history-view-button destructive-button" onClick={() => onUnregister(project)} disabled={Boolean(unregisteringPath)}>
                   {unregisteringPath === project.path ? "Unregistering..." : "Unregister"}
                 </button>
               </div>
@@ -1344,76 +1434,6 @@ function SettingsSection({ projectRoot, selectedProject, onChangeRoot, changing,
         <strong>Saved UI state</strong>
         <p className="muted">Reset the saved project selection, active section, historical scan, and panel layout. Backend projects, scans, notes, trust profiles, and workspace configuration are not changed.</p>
         <button type="button" className="secondary-button" onClick={onResetSavedState}>Reset saved UI state</button>
-      </div>
-    </section>
-  );
-}
-
-function OverallRiskPanel({ report, result, trustProfile }) {
-  if (!result) {
-    return (
-      <section className="panel overview-panel overall-risk-panel">
-        <div className="panel-heading">
-          <div>
-            <h2>Overall Risk</h2>
-            <p className="muted">No scan has been run for this project yet.</p>
-          </div>
-        </div>
-        <p className="muted">Run the first scan to calculate risk and review project findings.</p>
-      </section>
-    );
-  }
-
-  const risk = result?.overall_risk || "none";
-  const coverageUnknown = !report.completeness.known;
-  const reasons = buildRiskReasons(report, risk);
-  const reasonTone = overallRiskReasonTone(report, risk);
-  const metrics = [
-    ["Unresolved findings", report.reviewSummary.unreviewedFindingCount],
-    ["Reviewed findings", report.reviewSummary.reviewedFindingCount],
-    ["Reviewed files", report.reviewedFileCount],
-    ["Ignored files", report.ignoredFileCount],
-    ["Manifests", report.manifests.length],
-    ["Lockfiles", report.lockfiles.length],
-  ];
-  return (
-    <section className={`panel overview-panel overall-risk-panel${coverageUnknown ? " coverage-unknown" : ""}`}>
-      <div className="panel-heading">
-        <div>
-          <h2>Overall Risk</h2>
-          <p className="muted">Current scanner result and review context.</p>
-        </div>
-      </div>
-      <div className="risk-hero">
-        <div className={`risk-ring risk-ring-${coverageUnknown ? "unknown" : risk}`}>
-          <strong>{formatRiskLabel(risk)}</strong>
-          <span>{report.totalFindings}</span>
-          <small>Findings</small>
-        </div>
-        <div className="risk-reasons">
-          <p className="review-risk-summary"><strong>Raw risk:</strong> {formatRiskLabel(risk)} · <strong>Highest unreviewed severity:</strong> {formatRiskLabel(report.reviewSummary.highestUnreviewedSeverity)}</p>
-          <p>{riskSummaryText(report, risk)}</p>
-          <div className="risk-metrics">
-            {metrics.map(([label, value]) => (
-              <div key={label}>
-                <strong>{value}</strong>
-                <span>{label}</span>
-              </div>
-            ))}
-          </div>
-          <ul>
-            {reasons.slice(0, 4).map((reason) => (
-              <li className={`risk-indicator risk-indicator-${reasonTone}`} key={reason}>
-                <span className="risk-indicator-symbol" aria-hidden="true">{riskIndicatorSymbol(reasonTone)}</span>
-                <span>{reason}</span>
-              </li>
-            ))}
-            <li className="risk-indicator risk-indicator-neutral">
-              <span className="risk-indicator-symbol" aria-hidden="true">{riskIndicatorSymbol("neutral")}</span>
-              <span>Risk tolerance: {trustProfile.riskTolerance || "normal"}</span>
-            </li>
-          </ul>
-        </div>
       </div>
     </section>
   );
@@ -1682,8 +1702,9 @@ function ScanHeaderStatus({ result, completeness }) {
 
 function ScanCompletenessSummary({ completeness, viewMode, isScanning, onRunScan }) {
   const needsRescan = !completeness.known || !completeness.complete;
+  const completenessState = !completeness.known ? "unknown" : completeness.complete ? "complete" : "incomplete";
   return (
-    <section className="scan-completeness">
+    <section className={`scan-completeness ${completenessState}`}>
       <h3>{coverageLabel(completeness)}</h3>
       {!completeness.known ? <p>Completeness metadata is unavailable for this older scan. Do not assume full coverage. Run a new scan to verify current coverage.</p> : (
         <div className="scan-completeness-counts">
@@ -1875,7 +1896,7 @@ function TrustedDependencyBaselinePanel({ baseline, scan, viewMode, compact, mut
             <div className="trusted-baseline-buttons">
               {approvalEligible ? <button type="button" onClick={() => onApprove(scan, true, baseline.note)} disabled={mutation.saving}>{mutation.saving ? "Saving..." : "Replace trusted baseline"}</button> : null}
               <button type="button" className="history-view-button" onClick={() => setEditingNote((value) => !value)} disabled={mutation.saving}>Edit note</button>
-              <button type="button" className="history-view-button" onClick={onClear} disabled={mutation.saving}>Clear trusted baseline</button>
+              <button type="button" className="history-view-button destructive-button" onClick={onClear} disabled={mutation.saving}>Clear trusted baseline</button>
             </div>
           ) : null}
           {editingNote && baseline.configured ? (

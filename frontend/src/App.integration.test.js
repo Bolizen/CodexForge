@@ -534,7 +534,7 @@ test("selected and unselected history rows retain readable narrow-layout structu
 
   const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
   assert.doesNotMatch(styles, /\.selected-history-row\s*\{[^}]*background:\s*#f7f9fa/);
-  assert.match(styles, /\.selected-history-row\s*\{[^}]*background:\s*rgba\(255, 138, 24, 0\.07\);[^}]*border:\s*1px solid rgba\(255, 138, 24, 0\.3\)/s);
+  assert.match(styles, /\.selected-history-row\s*\{[^}]*background:\s*var\(--color-surface-selected\);[^}]*border:\s*1px solid var\(--color-border\);[^}]*border-left:\s*3px solid var\(--color-accent\)/s);
   assert.match(styles, /\.history-row\s*\{[^}]*grid-template-columns:\s*minmax\(190px, 1fr\) max-content minmax\(260px, 1fr\) max-content;/s);
   assert.match(styles, /\.history-row\s*>\s*div:first-child span\s*\{[^}]*overflow-wrap:\s*break-word;[^}]*word-break:\s*normal;/s);
   assert.doesNotMatch(styles, /\.history-row\s*>\s*div:first-child span\s*\{[^}]*overflow-wrap:\s*anywhere;/s);
