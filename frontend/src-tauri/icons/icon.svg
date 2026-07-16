@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Glacial">
+  <defs>
+    <linearGradient id="ice" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#163968"/>
+      <stop offset="1" stop-color="#087ea4"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#ice)"/>
+  <path d="M256 104v304M124 180l264 152M124 332l264-152M256 104l-38 52m38-52 38 52M256 408l-38-52m38 52 38-52M124 180l65 7m-65-7 26-60M388 332l-65-7m65 7-26 60M124 332l65-7m-65 7 26 60M388 180l-65 7m65-7-26-60" fill="none" stroke="#e9fbff" stroke-linecap="round" stroke-linejoin="round" stroke-width="30"/>
+  <circle cx="256" cy="256" r="42" fill="#ffffff"/>
+</svg>

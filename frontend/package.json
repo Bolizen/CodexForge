@@ -1,21 +1,25 @@
 {
   "name": "glacial",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
     "test": "node --test src/apiConfig.test.js src/projectRequests.test.js src/reportMarkdown.test.js src/sessionState.test.js src/dependencyTrust.test.js src/findingReviews.test.js src/trustedDependencyBaseline.test.js src/App.integration.test.js",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.0.0",
-    "vite": "^7.0.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "vite": "^7.0.0"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "2.11.4",
     "jsdom": "29.1.1"
   }
 }

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Glacial startup error</title>
+    <style>
+      :root {
+        font-family: "Segoe UI", sans-serif;
+        color: #162033;
+        background: #f4f7fb;
+      }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+      }
+
+      main {
+        max-width: 680px;
+        margin: 32px;
+        padding: 32px;
+        background: #ffffff;
+        border: 1px solid #d8e0ec;
+        border-radius: 12px;
+      }
+
+      h1 {
+        margin-top: 0;
+      }
+
+      p {
+        line-height: 1.6;
+      }
+    </style>
+    <script src="/startup-error.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <h1>Glacial could not start</h1>
+      <p id="startup-error-detail"></p>
+      <p>Close this window, correct the problem, and run Glacial again.</p>
+    </main>
+  </body>
+</html>

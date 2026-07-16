@@ -21,6 +21,7 @@ class CorsConfigurationTests(unittest.TestCase):
     def test_defaults_and_middleware_use_the_resolved_origins(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(allowed_cors_origins(), list(DEFAULT_CORS_ORIGINS))
+            self.assertIn("http://tauri.localhost", allowed_cors_origins())
 
         middleware = next(item for item in app.user_middleware if item.cls is CORSMiddleware)
         self.assertEqual(middleware.kwargs["allow_origins"], allowed_cors_origins())

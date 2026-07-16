@@ -8,6 +8,7 @@ CORS_ORIGINS_ENV = "GLACIAL_CORS_ORIGINS"
 DEFAULT_CORS_ORIGINS = (
     "http://127.0.0.1:5173",
     "http://localhost:5173",
+    "http://tauri.localhost",
 )
 
 
