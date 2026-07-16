@@ -41,10 +41,10 @@ Each software version becomes available under the Apache License, Version 2.0 on
 
 Clone the repository and open two terminals from the repo root.
 
-Clean-room setup and verification have been completed with Python 3.13.13, Node.js 24.16.0, and npm 11.13.0. These are verified versions, not declared minimum-version guarantees.
+Clean-room setup and verification have been completed with Python 3.12.13 and Python 3.13.13, Node.js 24.16.0, and npm 11.13.0. These are verified versions, not declared minimum-version guarantees.
 
 ```bash
-git clone <repo-url> Glacial
+git clone https://github.com/Bolizen/Glacial.git Glacial
 cd Glacial
 ```
 
