@@ -19,3 +19,6 @@ windows-sys = { version = "=0.61.2", features = [
   "Win32_System_JobObjects",
   "Win32_System_Threading",
 ] }
+
+[patch.crates-io]
+glib = { path = "../../third_party/rust/glib-0.18.5-patched" }
