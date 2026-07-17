@@ -47,7 +47,13 @@
       "binaries/_internal/": "_internal/"
     },
     "windows": {
-      "allowDowngrades": false
+      "allowDowngrades": false,
+      "nsis": {
+        "languages": [
+          "English"
+        ],
+        "displayLanguageSelector": false
+      }
     }
   }
 }
