@@ -26,6 +26,11 @@ class CorsConfigurationTests(unittest.TestCase):
         middleware = next(item for item in app.user_middleware if item.cls is CORSMiddleware)
         self.assertEqual(middleware.kwargs["allow_origins"], allowed_cors_origins())
         self.assertNotIn("*", middleware.kwargs["allow_origins"])
+        self.assertEqual(
+            middleware.kwargs["allow_methods"],
+            ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        )
+        self.assertEqual(middleware.kwargs["allow_headers"], ["Authorization", "Content-Type"])
 
     def test_multiple_configured_origins_are_normalized_and_deduplicated(self) -> None:
         configured = " https://dashboard.example.test/, http://127.0.0.1:5174,https://dashboard.example.test "

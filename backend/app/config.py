@@ -5,6 +5,7 @@ from urllib.parse import urlsplit
 
 
 CORS_ORIGINS_ENV = "GLACIAL_CORS_ORIGINS"
+DESKTOP_AUTH_TOKEN_ENV = "GLACIAL_DESKTOP_AUTH_TOKEN"
 DEFAULT_CORS_ORIGINS = (
     "http://127.0.0.1:5173",
     "http://localhost:5173",
@@ -23,6 +24,15 @@ def allowed_cors_origins(value: str | None = None) -> list[str]:
         if origin not in origins:
             origins.append(origin)
     return origins
+
+
+def desktop_auth_token(value: str | None = None, *, environment: bool = True) -> str | None:
+    configured = os.getenv(DESKTOP_AUTH_TOKEN_ENV) if environment else value
+    if configured is None:
+        return None
+    if len(configured) != 64 or any(character not in "0123456789abcdef" for character in configured):
+        raise ValueError(f"{DESKTOP_AUTH_TOKEN_ENV} must be a 256-bit lowercase hexadecimal token")
+    return configured
 
 
 def _normalized_origin(value: str) -> str:

@@ -1,22 +1,48 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any
 
 
-DB_DIR = Path(__file__).resolve().parent.parent / "data"
-DB_PATH = DB_DIR / "glacial.db"
+DESKTOP_DATA_DIR_ENV = "GLACIAL_DESKTOP_DATA_DIR"
+REPOSITORY_DB_DIR = Path(__file__).resolve().parent.parent / "data"
+def resolved_database_path(value: str | None, *, environment_present: bool) -> Path:
+    if not environment_present:
+        return REPOSITORY_DB_DIR / "glacial.db"
+    if value is None or not value or "\0" in value:
+        raise ValueError(f"{DESKTOP_DATA_DIR_ENV} must contain an absolute data directory")
+
+    candidate = Path(value)
+    if not candidate.is_absolute() or any(part == ".." for part in candidate.parts):
+        raise ValueError(f"{DESKTOP_DATA_DIR_ENV} must contain an absolute data directory")
+    try:
+        normalized = candidate.resolve(strict=False)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError(f"{DESKTOP_DATA_DIR_ENV} contains an invalid data directory") from exc
+    return normalized / "glacial.db"
+
+
+DB_PATH = resolved_database_path(
+    os.getenv(DESKTOP_DATA_DIR_ENV),
+    environment_present=DESKTOP_DATA_DIR_ENV in os.environ,
+)
+DB_DIR = DB_PATH.parent
 DEFAULT_WORKSPACE_ROOT = str(Path.home() / "GlacialProjects")
 WORKSPACE_ROOT_SETTING = "project_root"
 
 
 def get_connection() -> sqlite3.Connection:
-    DB_DIR.mkdir(parents=True, exist_ok=True)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(DB_PATH)
     connection.row_factory = sqlite3.Row
     return connection
+
+
+def prepare_database_directory() -> None:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def init_db() -> None:

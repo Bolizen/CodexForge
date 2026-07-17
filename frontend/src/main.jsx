@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { API_BASE_URL } from "./apiConfig.js";
+import { requestApi } from "./apiTransport.js";
 import {
   dependencyStatusDescription,
   dependencyStatusLabel,
@@ -2323,17 +2323,7 @@ function History({ scans, selectedScanId, onSelectScan, open, onOpenChange }) {
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    method: options.method || "GET",
-    signal: options.signal,
-    headers: options.body ? { "Content-Type": "application/json" } : undefined,
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(data.detail || "Request failed.");
-  }
-  return data;
+  return requestApi(path, options);
 }
 
 function formatTrustProfileDraft(profile) {

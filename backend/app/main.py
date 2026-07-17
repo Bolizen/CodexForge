@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import hmac
 import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from .agents import generate_agents_md
 from .agents_write import filesystem_error_status, safe_write_project_file
 from .changelog import CHANGELOG_ENTRIES
-from .config import allowed_cors_origins
+from .config import allowed_cors_origins, desktop_auth_token
 from .database import (
     WORKSPACE_ROOT_SETTING,
     get_connection,
@@ -46,19 +48,50 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_cors_origins(),
     allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
+
+
+@app.middleware("http")
+async def require_desktop_authentication(request: Request, call_next):
+    token = desktop_auth_token()
+    if not _authorized_api_request(
+        request.url.path,
+        request.method,
+        request.headers.get("authorization"),
+        token,
+    ):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Desktop API authentication is required."},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return await call_next(request)
 
 
 @app.on_event("startup")
 def startup() -> None:
+    desktop_auth_token()
     init_db()
 
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+def _authorized_api_request(
+    path: str,
+    method: str,
+    authorization: str | None,
+    token: str | None,
+) -> bool:
+    if token is None or method == "OPTIONS" or not path.startswith("/api/"):
+        return True
+    presented = authorization or ""
+    expected = f"Bearer {token}"
+    return hmac.compare_digest(presented.encode("utf-8"), expected.encode("ascii"))
 
 
 @app.get("/api/config")
