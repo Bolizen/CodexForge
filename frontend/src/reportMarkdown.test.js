@@ -243,7 +243,8 @@ test("exports complete, incomplete, and unknown scan coverage conservatively", (
       fileInspectionFailureCount: 2,
       oversizedFileCount: 3,
       unsafePathCount: 1,
-      issueCount: 7,
+      policyExcludedFileCount: 4,
+      issueCount: 11,
     },
   }, emptyReport, null, { configured: false });
   assert.match(incomplete, /^## Scan completeness$/m);
@@ -251,7 +252,8 @@ test("exports complete, incomplete, and unknown scan coverage conservatively", (
   assert.match(incomplete, /Directory traversal failures: 1/);
   assert.match(incomplete, /File inspection\/read failures: 2/);
   assert.match(incomplete, /Oversized files skipped: 3/);
-  assert.match(incomplete, /Total inspection issues: 7/);
+  assert.match(incomplete, /Repository policy exclusions: 4/);
+  assert.match(incomplete, /Total inspection issues: 11/);
   assert.match(incomplete, /No manifests recorded in this scan; coverage incomplete\./);
   assert.match(incomplete, /No lockfiles recorded in this scan; coverage incomplete\./);
   assert.match(incomplete, /No package lifecycle scripts recorded in this scan; coverage incomplete\./);
@@ -259,6 +261,27 @@ test("exports complete, incomplete, and unknown scan coverage conservatively", (
   assert.match(incomplete, /No ignored files recorded in this scan; coverage incomplete\./);
   assert.match(incomplete, /No reviewed files recorded in this scan; coverage incomplete\./);
   assert.match(incomplete, /No zone\/context recorded in this scan; coverage incomplete\./);
+
+  const legacyIgnored = buildScanReportMarkdown({
+    ...scanResult([]),
+    ignoredFiles: ["package.json"],
+    ignoredFileCount: 1,
+    scanCompleteness: {
+      complete: true,
+      traversalFailureCount: 0,
+      fileInspectionFailureCount: 0,
+      oversizedFileCount: 0,
+      unsafePathCount: 0,
+      dependencyAnalysisFailureCount: 0,
+      issueCount: 0,
+    },
+  }, reportFixture({
+    ignoredFiles: ["package.json"],
+    ignoredFileCount: 1,
+  }), null, { configured: false });
+  assert.match(legacyIgnored, /^Status: Incomplete$/m);
+  assert.match(legacyIgnored, /Repository policy exclusions: 1/);
+  assert.doesNotMatch(legacyIgnored, /^Status: Complete$/m);
 
   const complete = buildScanReportMarkdown({
     ...scanResult([]),

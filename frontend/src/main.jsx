@@ -1713,6 +1713,7 @@ function ScanCompletenessSummary({ completeness, viewMode, isScanning, onRunScan
           <span>Oversized files: {completeness.oversizedFileCount}</span>
           <span>Unsafe paths skipped: {completeness.unsafePathCount}</span>
           <span>Dependency analysis failures: {completeness.dependencyAnalysisFailureCount}</span>
+          <span>Repository policy exclusions: {completeness.policyExcludedFileCount}</span>
           <span>Total issues: {completeness.issueCount}</span>
         </div>
       )}

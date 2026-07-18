@@ -79,6 +79,7 @@ def scan_project(project_path: Path, previous_dependency_trust: dict[str, Any] |
         "oversizedFileCount": 0,
         "unsafePathCount": 0,
         "dependencyAnalysisFailureCount": 0,
+        "policyExcludedFileCount": 0,
     }
     dependency_inputs: list[tuple[Path, str]] = []
     generic_failed_dependency_paths: set[str] = set()
@@ -153,6 +154,7 @@ def scan_project(project_path: Path, previous_dependency_trust: dict[str, Any] |
 
             if relative_path in ignore_patterns:
                 ignored_files.append(relative_path)
+                issue_counts["policyExcludedFileCount"] += 1
                 continue
             if relative_path in failed_inspection_paths:
                 continue

@@ -237,8 +237,57 @@ class ScannerCompletenessTests(unittest.TestCase):
             "oversizedFileCount": 0,
             "unsafePathCount": 0,
             "dependencyAnalysisFailureCount": 0,
+            "policyExcludedFileCount": 0,
             "issueCount": 0,
         })
+
+    def test_repository_ignore_policy_cannot_claim_complete_security_coverage(self) -> None:
+        scripts_path = self.project_path / "scripts"
+        scripts_path.mkdir()
+        (self.project_path / ".glacialignore").write_text(
+            "package.json\nscripts/install.ps1\n",
+            encoding="utf-8",
+        )
+        (self.project_path / "package.json").write_text(
+            '{"scripts":{"postinstall":"node setup.js"}}',
+            encoding="utf-8",
+        )
+        (scripts_path / "install.ps1").write_text("Invoke-Expression $payload", encoding="utf-8")
+
+        result = scan_project(self.project_path)
+
+        self.assertEqual(result["ignoredFiles"], ["package.json", "scripts/install.ps1"])
+        self.assertEqual(result["manifests"], [])
+        self.assertEqual(result["lifecycleScripts"], [])
+        self.assertFalse(any(
+            finding["path"] in {"package.json", "scripts/install.ps1"}
+            for finding in result["findings"]
+        ))
+        self.assertEqual(result["overall_risk"], "none")
+        self.assertEqual(result["scanCompleteness"]["policyExcludedFileCount"], 2)
+        self.assertEqual(result["scanCompleteness"]["issueCount"], 2)
+        self.assertFalse(result["scanCompleteness"]["complete"])
+
+    def test_legitimate_ignored_noise_remains_excluded_and_visible(self) -> None:
+        generated_path = self.project_path / "generated"
+        generated_path.mkdir()
+        (self.project_path / ".glacialignore").write_text(
+            "generated\\noise.txt\n",
+            encoding="utf-8",
+        )
+        (generated_path / "noise.txt").write_text("eval(untrusted_input)", encoding="utf-8")
+
+        result = scan_project(self.project_path)
+
+        self.assertEqual(result["ignoredFiles"], ["generated/noise.txt"])
+        self.assertNotIn("generated/noise.txt", result["reviewedFiles"])
+        self.assertFalse(any(
+            finding["path"] == "generated/noise.txt"
+            for finding in result["findings"]
+        ))
+        self.assertEqual(result["overall_risk"], "none")
+        self.assertEqual(result["scanCompleteness"]["policyExcludedFileCount"], 1)
+        self.assertFalse(result["scanCompleteness"]["complete"])
 
     def test_walk_error_is_recorded(self) -> None:
         blocked = self.project_path / "blocked"

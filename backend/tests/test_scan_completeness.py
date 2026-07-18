@@ -75,7 +75,8 @@ class ScanCompletenessPersistenceTests(unittest.TestCase):
                 "oversizedFileCount": 0,
                 "unsafePathCount": 0,
                 "dependencyAnalysisFailureCount": 0,
-                "issueCount": 1,
+                "policyExcludedFileCount": 2,
+                "issueCount": 3,
             },
         }
         payload = ProjectPathRequest(project_path=str(self.project_path))
@@ -111,6 +112,52 @@ class ScanCompletenessPersistenceTests(unittest.TestCase):
 
         self.assertIsNone(scan["scanCompleteness"])
         self.assertIsNone(project["last_scan_completeness"])
+
+    def test_legacy_complete_scan_with_ignored_files_is_reclassified(self) -> None:
+        legacy_result = {
+            "overall_risk": "none",
+            "findings": [],
+            "manifests": [],
+            "lockfiles": [],
+            "lifecycleScripts": [],
+            "secretFiles": [],
+            "ignoredFiles": ["package.json"],
+            "reviewedFiles": [".glacialignore"],
+            "reviewedFileCount": 1,
+            "zone": "Unknown",
+            "scanCompleteness": {
+                "complete": True,
+                "traversalFailureCount": 0,
+                "fileInspectionFailureCount": 0,
+                "oversizedFileCount": 0,
+                "unsafePathCount": 0,
+                "dependencyAnalysisFailureCount": 0,
+                "issueCount": 0,
+            },
+        }
+        payload = ProjectPathRequest(project_path=str(self.project_path))
+
+        with (
+            patch.object(main, "_ensure_project", return_value=self.project_path),
+            patch.object(main, "scan_project", return_value=legacy_result),
+            patch.object(main, "_project_root", return_value=self.project_path.parent),
+        ):
+            main.run_scan(payload)
+            history = main.scan_history(str(self.project_path))["scans"]
+            project = main.list_projects()["projects"][0]
+
+        expected = {
+            "complete": False,
+            "traversalFailureCount": 0,
+            "fileInspectionFailureCount": 0,
+            "oversizedFileCount": 0,
+            "unsafePathCount": 0,
+            "dependencyAnalysisFailureCount": 0,
+            "policyExcludedFileCount": 1,
+            "issueCount": 1,
+        }
+        self.assertEqual(history[0]["scanCompleteness"], expected)
+        self.assertEqual(project["last_scan_completeness"], expected)
 
 
 if __name__ == "__main__":

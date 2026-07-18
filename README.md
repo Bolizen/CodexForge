@@ -137,7 +137,7 @@ The documented default ports remain `8000` for the backend and `5173` for the fr
 - Scan results distinguish complete coverage, incomplete coverage with inspection-issue counts, and older scans whose coverage is unknown. A file is counted as reviewed only after its intended filename-only or content inspection succeeds; ignored and safely rejected linked paths are not reviewed.
 - Older scan rows may show unavailable or zero metadata for fields added after those scans were created. Scan history does not store full file contents.
 - Findings are review prompts, not proof of compromise, and the scanner is not a malware detector.
-- `.glacialignore` can suppress known-safe local or self-referential scanner noise. Ignored files are treated neutrally, not as suspicious by default.
+- `.glacialignore` can suppress known-safe local or self-referential scanner noise. Ignored files remain visible and are treated neutrally for risk, but each repository-policy exclusion is an explicit completeness gap, so that scan cannot be reported as complete.
 - The AGENTS.md generator previews Markdown before writing. Existing AGENTS.md files require explicit overwrite confirmation.
 
 ## Manual Test Notes

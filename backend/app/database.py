@@ -260,6 +260,7 @@ def _scan_completeness(metadata: dict[str, Any]) -> dict[str, Any] | None:
         "oversizedFileCount",
         "unsafePathCount",
         "dependencyAnalysisFailureCount",
+        "policyExcludedFileCount",
     )
     counts = {
         field: max(0, int(value.get(field, 0)))
@@ -267,6 +268,10 @@ def _scan_completeness(metadata: dict[str, Any]) -> dict[str, Any] | None:
         else 0
         for field in count_fields
     }
+    counts["policyExcludedFileCount"] = max(
+        counts["policyExcludedFileCount"],
+        len(_metadata_list(metadata, "ignoredFiles")),
+    )
     issue_count = sum(counts.values())
     return {
         "complete": value.get("complete") is True and issue_count == 0,

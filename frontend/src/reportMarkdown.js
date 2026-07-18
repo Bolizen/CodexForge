@@ -103,6 +103,7 @@ export function normalizeScanCompleteness(result) {
       oversizedFileCount: 0,
       unsafePathCount: 0,
       dependencyAnalysisFailureCount: 0,
+      policyExcludedFileCount: 0,
       issueCount: 0,
     };
   }
@@ -112,6 +113,11 @@ export function normalizeScanCompleteness(result) {
     oversizedFileCount: nonNegativeCount(value.oversizedFileCount),
     unsafePathCount: nonNegativeCount(value.unsafePathCount),
     dependencyAnalysisFailureCount: nonNegativeCount(value.dependencyAnalysisFailureCount),
+    policyExcludedFileCount: Math.max(
+      nonNegativeCount(value.policyExcludedFileCount),
+      nonNegativeCount(result?.ignoredFileCount),
+      Array.isArray(result?.ignoredFiles) ? result.ignoredFiles.length : 0,
+    ),
   };
   const issueCount = Object.values(counts).reduce((total, count) => total + count, 0);
   return {
@@ -359,6 +365,7 @@ function formatScanCompleteness(completeness) {
     `- Oversized files skipped: ${completeness.oversizedFileCount}`,
     `- Unsafe linked or hardlinked paths skipped: ${completeness.unsafePathCount}`,
     `- Dependency analysis failures: ${completeness.dependencyAnalysisFailureCount}`,
+    `- Repository policy exclusions: ${completeness.policyExcludedFileCount}`,
     `- Total inspection issues: ${completeness.issueCount}`,
   ].join("\n");
 }
