@@ -566,7 +566,7 @@ function markdownBaseline(status, overrides = {}) {
   return {
     configured: true,
     valid: status !== "invalid",
-    fingerprint: `cfdb1_${"a".repeat(64)}`,
+    fingerprint: `cfdb2_${"a".repeat(64)}`,
     sourceScanDate: "2026-07-12T10:00:00Z",
     createdAt: "2026-07-12T10:05:00Z",
     note: "Approved locally.",

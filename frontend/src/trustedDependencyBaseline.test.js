@@ -16,10 +16,10 @@ test("normalizes absent and configured trusted baseline states conservatively", 
   const configured = normalizeTrustedDependencyBaseline({
     configured: true,
     valid: true,
-    fingerprint: `cfdb1_${"a".repeat(64)}`,
+    fingerprint: `cfdb2_${"a".repeat(64)}`,
     sourceScanId: 7,
     note: "Approved.",
-    approval: { eligible: true, fingerprint: `cfdb1_${"b".repeat(64)}` },
+    approval: { eligible: true, fingerprint: `cfdb2_${"b".repeat(64)}` },
     comparison: {
       status: "drift",
       changeCount: 2,
@@ -33,7 +33,7 @@ test("normalizes absent and configured trusted baseline states conservatively", 
   assert.equal(configured.comparison.changeCount, 2);
   assert.equal(configured.approval.eligible, true);
   assert.equal(trustedBaselineComparisonLabel("drift"), "Drift detected");
-  assert.equal(shortBaselineFingerprint(configured.fingerprint), "cfdb1_aaaaaa...aaaaaa");
+  assert.equal(shortBaselineFingerprint(configured.fingerprint), "cfdb2_aaaaaa...aaaaaa");
 });
 
 test("invalid comparison data fails closed without inventing eligibility", () => {

@@ -8,9 +8,9 @@ from typing import Any, Iterable, Mapping
 from urllib.parse import urlsplit
 
 
-BASELINE_SCHEMA_VERSION = 1
-FINGERPRINT_PREFIX = "cfdb1_"
-FINGERPRINT_PATTERN = re.compile(r"^cfdb1_[0-9a-f]{64}$")
+BASELINE_SCHEMA_VERSION = 2
+FINGERPRINT_PREFIX = "cfdb2_"
+FINGERPRINT_PATTERN = re.compile(r"^cfdb2_[0-9a-f]{64}$")
 MAX_ENTRIES = 2000
 MAX_PATHS = 500
 MAX_CHANGES = 300
@@ -250,7 +250,8 @@ def _snapshot_from_row(row: Mapping[str, Any]) -> dict[str, Any]:
 def _entry(value: Mapping[str, Any]) -> dict[str, Any]:
     string_fields = (
         "ecosystem", "name", "group", "requestedSpecification", "lockedVersion",
-        "sourceType", "sourceIdentifier", "integrity", "manifestPath", "lockfilePath",
+        "sourceType", "sourceIdentifier", "vcsRequestedRevision", "vcsLockedRevision",
+        "vcsResolvedRevision", "integrity", "manifestPath", "lockfilePath",
     )
     boolean_fields = ("integrityPresent", "direct", "optional", "dev", "peer", "installScriptIndicator")
     if any(value.get(field) is not None and not isinstance(value.get(field), str) for field in string_fields):
@@ -264,6 +265,13 @@ def _entry(value: Mapping[str, Any]) -> dict[str, Any]:
     if source_type not in SUPPORTED_SOURCE_TYPES:
         raise BaselineError("Dependency inventory contains an unsupported source type.")
     source_identifier = _source_identifier(value.get("sourceIdentifier"))
+    vcs_requested_revision = _vcs_revision_identity(
+        value.get("vcsRequestedRevision"), {"rev", "tag", "branch", "ref"}, multiple=True,
+    )
+    vcs_locked_revision = _vcs_revision_identity(value.get("vcsLockedRevision"), {"reference"})
+    vcs_resolved_revision = _vcs_revision_identity(value.get("vcsResolvedRevision"), {"resolved"})
+    if source_type != "vcs" and any((vcs_requested_revision, vcs_locked_revision, vcs_resolved_revision)):
+        raise BaselineError("Non-VCS dependency inventory contains VCS revision identity.")
     integrity = _canonical_text(value.get("integrity"), 300, "integrity")
     integrity_present = value.get("integrityPresent") is True
     if integrity and not _valid_integrity(integrity):
@@ -278,6 +286,9 @@ def _entry(value: Mapping[str, Any]) -> dict[str, Any]:
         "lockedVersion": _safe_spec(value.get("lockedVersion")),
         "sourceType": source_type,
         "sourceIdentifier": source_identifier,
+        "vcsRequestedRevision": vcs_requested_revision,
+        "vcsLockedRevision": vcs_locked_revision,
+        "vcsResolvedRevision": vcs_resolved_revision,
         "integrity": integrity,
         "integrityPresent": integrity_present,
         "direct": value.get("direct") is True,
@@ -379,6 +390,10 @@ def _entry_changes(old: Mapping[str, Any], current: Mapping[str, Any]) -> list[d
     current_source = (current.get("sourceType"), current.get("sourceIdentifier"))
     if old_source != current_source:
         changes.append(_package_change("source-changed", current, ":".join(filter(None, old_source)), ":".join(filter(None, current_source))))
+    old_revision = _vcs_revision_summary(old)
+    current_revision = _vcs_revision_summary(current)
+    if old_revision != current_revision:
+        changes.append(_package_change("vcs-revision-changed", current, old_revision, current_revision))
     if (
         old.get("lockedVersion") == current.get("lockedVersion")
         and old_source == current_source
@@ -405,6 +420,7 @@ def _findings_for_changes(changes: Iterable[Mapping[str, Any]]) -> list[dict[str
             "specification-changed": "trusted-baseline-specification-changed",
             "version-changed": "trusted-baseline-version-changed",
             "source-changed": "trusted-baseline-source-changed",
+            "vcs-revision-changed": "trusted-baseline-vcs-revision-changed",
             "integrity-changed": "trusted-baseline-integrity-changed",
         }.get(change_type, "trusted-baseline-input-changed")
         severity = _change_severity(change)
@@ -479,6 +495,13 @@ def _input_change(change_type: str, value: str) -> dict[str, Any]:
     return {"changeType": change_type, "path": value}
 
 
+def _vcs_revision_summary(entry: Mapping[str, Any]) -> str:
+    return "|".join(
+        str(entry.get(field) or "")
+        for field in ("vcsRequestedRevision", "vcsLockedRevision", "vcsResolvedRevision")
+    )
+
+
 def _group_entries(entries: Any) -> dict[tuple[str, str, str, bool], list[dict[str, Any]]]:
     groups: dict[tuple[str, str, str, bool], list[dict[str, Any]]] = defaultdict(list)
     for entry in entries if isinstance(entries, list) else []:
@@ -522,7 +545,8 @@ def _entry_identity(entry: Mapping[str, Any]) -> tuple[Any, ...]:
     return (
         entry.get("ecosystem"), entry.get("name"), entry.get("group"), entry.get("direct"),
         entry.get("requestedSpecification"), entry.get("lockedVersion"), entry.get("sourceType"),
-        entry.get("sourceIdentifier"), entry.get("integrity"), entry.get("manifestPath"), entry.get("lockfilePath"),
+        entry.get("sourceIdentifier"), entry.get("vcsRequestedRevision"), entry.get("vcsLockedRevision"),
+        entry.get("vcsResolvedRevision"), entry.get("integrity"), entry.get("manifestPath"), entry.get("lockfilePath"),
     )
 
 
@@ -541,7 +565,7 @@ def _change_severity(change: Mapping[str, Any]) -> str:
     change_type = change.get("changeType")
     if change_type == "integrity-changed":
         return "high"
-    if change_type == "source-changed":
+    if change_type in {"source-changed", "vcs-revision-changed"}:
         source_type = change.get("sourceType")
         identifier = str(change.get("sourceIdentifier") or "")
         return "high" if source_type in {"url", "local", "vcs"} or identifier.startswith("http:") else "medium"
@@ -557,6 +581,7 @@ def _change_explanation(change_type: str) -> str:
         "specification-changed": "A requested dependency specification changed from the approved baseline.",
         "version-changed": "A resolved dependency version changed from the approved baseline.",
         "source-changed": "A dependency source changed from the approved baseline.",
+        "vcs-revision-changed": "A VCS dependency selector or resolved revision changed from the approved baseline.",
         "integrity-changed": "Dependency integrity changed while package, version, and source identity remained equivalent.",
     }.get(change_type, "Dependency inputs changed from the approved baseline.")
 
@@ -637,6 +662,25 @@ def _source_identifier(value: Any) -> str:
     if re.search(r"(?:^|:)[A-Za-z]:/", text) or text.lower().startswith(("file:/", "link:/")):
         raise BaselineError("Dependency source identity contains an absolute path.")
     return text
+
+
+def _vcs_revision_identity(value: Any, selectors: set[str], *, multiple: bool = False) -> str:
+    text = _canonical_text(value, MAX_STRING, "VCS revision identity")
+    if not text:
+        return ""
+    values = text.split(",") if multiple else [text]
+    if not multiple and len(values) != 1:
+        raise BaselineError("VCS revision identity is invalid.")
+    pattern = re.compile(r"^([a-z]+):sha256:([0-9a-f]{64})$")
+    parsed: list[tuple[str, str]] = []
+    for item in values:
+        match = pattern.fullmatch(item)
+        if not match or match.group(1) not in selectors:
+            raise BaselineError("VCS revision identity is invalid.")
+        parsed.append((match.group(1), match.group(2)))
+    if len({selector for selector, _ in parsed}) != len(parsed):
+        raise BaselineError("VCS revision identity contains duplicate selectors.")
+    return ",".join(f"{selector}:sha256:{digest}" for selector, digest in parsed)
 
 
 def _text(value: Any, limit: int) -> str:

@@ -226,6 +226,28 @@ class DependencyTrustScannerTests(unittest.TestCase):
         unsafe = scan_project(self.project)
         self.assertTrue(any(item["reason"] == "unsafe-requirements-include" for item in unsafe["dependencyTrust"]["limitations"]))
 
+    def test_standard_pip_vcs_revision_identity_remains_stable_and_secret_free(self) -> None:
+        def scan(revision: str) -> dict[str, object]:
+            (self.project / "requirements.txt").write_text(
+                "demo @ git+https://pip-user:PIP_PASSWORD@github.com/org/repo.git@"
+                f"{revision}?token=PIP_QUERY#subdirectory=src\n",
+                encoding="utf-8",
+            )
+            trust = scan_project(self.project)["dependencyTrust"]
+            return next(entry for entry in trust["entries"] if entry["name"] == "demo")
+
+        first = scan("PIP_RAW_REVISION_ONE")
+        identical = scan("PIP_RAW_REVISION_ONE")
+        changed = scan("PIP_RAW_REVISION_TWO")
+
+        self.assertEqual(first["vcsRequestedRevision"], identical["vcsRequestedRevision"])
+        self.assertNotEqual(first["vcsRequestedRevision"], changed["vcsRequestedRevision"])
+        self.assertRegex(first["vcsRequestedRevision"], r"^rev:sha256:[0-9a-f]{64}$")
+        self.assertEqual(first["requestedSpecification"], "git+https://github.com/org/repo.git")
+        serialized = json.dumps([first, identical, changed])
+        for secret in ("PIP_PASSWORD", "PIP_QUERY", "PIP_RAW_REVISION_ONE", "PIP_RAW_REVISION_TWO", "pip-user"):
+            self.assertNotIn(secret, serialized)
+
     def test_requirements_continuations_markers_options_and_local_paths_are_conservative(self) -> None:
         continued_requirement = "requests==2.31.0 " + "\\" + "\n    --hash=sha256:abc\n"
         (self.project / "requirements.txt").write_text(
@@ -317,6 +339,94 @@ class DependencyTrustScannerTests(unittest.TestCase):
         self.assertIn("pipenv", trust["packageManagers"])
         self.assertTrue(any(entry["group"] == "optional:dev" for entry in trust["entries"]))
         self.assertTrue(any(entry["group"] == "pipenv-dev" for entry in trust["entries"]))
+
+    def test_poetry_vcs_selectors_and_lock_revisions_are_distinct_and_secret_free(self) -> None:
+        source = "https://poetry-user:POETRY_PASSWORD@github.com/org/repo.git?token=POETRY_QUERY#POETRY_FRAGMENT"
+        (self.project / "pyproject.toml").write_text(
+            "[tool.poetry.dependencies]\npython = \"^3.11\"\n"
+            f"revdep = {{ git = \"{source}\", rev = \"RAW_REV_SELECTOR\" }}\n"
+            f"tagdep = {{ git = \"{source}\", tag = \"RAW_TAG_SELECTOR\" }}\n"
+            f"branchdep = {{ git = \"{source}\", branch = \"RAW_BRANCH_SELECTOR\" }}\n",
+            encoding="utf-8",
+        )
+        lock_entries = []
+        for name, reference, resolved in (
+            ("revdep", "RAW_LOCK_REFERENCE_REV", "RAW_RESOLVED_REV"),
+            ("tagdep", "RAW_LOCK_REFERENCE_TAG", "RAW_RESOLVED_TAG"),
+            ("branchdep", "RAW_LOCK_REFERENCE_BRANCH", "RAW_RESOLVED_BRANCH"),
+        ):
+            lock_entries.append(
+                f'[[package]]\nname = "{name}"\nversion = "0.0.0"\noptional = false\n'
+                f'[package.source]\ntype = "git"\nurl = "{source}"\n'
+                f'reference = "{reference}"\nresolved_reference = "{resolved}"\n'
+            )
+        (self.project / "poetry.lock").write_text("".join(lock_entries), encoding="utf-8")
+
+        result = scan_project(self.project)
+        entries = {
+            entry["name"]: entry
+            for entry in result["dependencyTrust"]["entries"]
+            if entry["name"] in {"revdep", "tagdep", "branchdep"}
+        }
+
+        self.assertEqual(result["dependencyTrust"]["status"], "complete")
+        self.assertRegex(entries["revdep"]["vcsRequestedRevision"], r"^rev:sha256:[0-9a-f]{64}$")
+        self.assertRegex(entries["tagdep"]["vcsRequestedRevision"], r"^tag:sha256:[0-9a-f]{64}$")
+        self.assertRegex(entries["branchdep"]["vcsRequestedRevision"], r"^branch:sha256:[0-9a-f]{64}$")
+        self.assertEqual(len({entry["vcsRequestedRevision"] for entry in entries.values()}), 3)
+        for entry in entries.values():
+            self.assertRegex(entry["vcsLockedRevision"], r"^reference:sha256:[0-9a-f]{64}$")
+            self.assertRegex(entry["vcsResolvedRevision"], r"^resolved:sha256:[0-9a-f]{64}$")
+            self.assertEqual(entry["requestedSpecification"], "https://github.com/org/repo.git")
+        serialized = json.dumps(result)
+        for secret in (
+            "poetry-user", "POETRY_PASSWORD", "POETRY_QUERY", "POETRY_FRAGMENT",
+            "RAW_REV_SELECTOR", "RAW_TAG_SELECTOR", "RAW_BRANCH_SELECTOR",
+            "RAW_LOCK_REFERENCE_REV", "RAW_LOCK_REFERENCE_TAG", "RAW_LOCK_REFERENCE_BRANCH",
+            "RAW_RESOLVED_REV", "RAW_RESOLVED_TAG", "RAW_RESOLVED_BRANCH",
+        ):
+            self.assertNotIn(secret, serialized)
+
+    def test_supported_node_and_pipfile_vcs_references_are_preserved_opaquely(self) -> None:
+        node_source = "git+https://node-user:NODE_PASSWORD@github.com/org/node.git?token=NODE_QUERY"
+        self.write_json("package.json", {"dependencies": {"node-vcs": f"{node_source}#NODE_RAW_REF"}})
+        self.write_json("package-lock.json", {
+            "lockfileVersion": 3,
+            "packages": {
+                "": {"dependencies": {"node-vcs": f"{node_source}#NODE_RAW_REF"}},
+                "node_modules/node-vcs": {
+                    "version": "0.0.0", "resolved": f"{node_source}#NODE_RAW_RESOLVED",
+                },
+            },
+        })
+        pip_source = "https://pipfile-user:PIPFILE_PASSWORD@github.com/org/pipfile.git?token=PIPFILE_QUERY"
+        (self.project / "Pipfile").write_text(
+            f'[packages]\npipfile-vcs = {{ git = "{pip_source}", ref = "PIPFILE_RAW_REF" }}\n',
+            encoding="utf-8",
+        )
+        self.write_json("Pipfile.lock", {
+            "default": {
+                "pipfile-vcs": {
+                    "version": "==0.0.0", "git": pip_source, "ref": "PIPFILE_RAW_LOCK_REF", "hashes": [],
+                },
+            },
+            "develop": {},
+        })
+
+        result = scan_project(self.project)
+        node = next(entry for entry in result["dependencyTrust"]["entries"] if entry["name"] == "node-vcs")
+        pipfile = next(entry for entry in result["dependencyTrust"]["entries"] if entry["name"] == "pipfile-vcs")
+
+        self.assertRegex(node["vcsRequestedRevision"], r"^ref:sha256:[0-9a-f]{64}$")
+        self.assertRegex(node["vcsResolvedRevision"], r"^resolved:sha256:[0-9a-f]{64}$")
+        self.assertRegex(pipfile["vcsRequestedRevision"], r"^ref:sha256:[0-9a-f]{64}$")
+        self.assertRegex(pipfile["vcsLockedRevision"], r"^reference:sha256:[0-9a-f]{64}$")
+        serialized = json.dumps(result)
+        for secret in (
+            "node-user", "NODE_PASSWORD", "NODE_QUERY", "NODE_RAW_REF", "NODE_RAW_RESOLVED",
+            "pipfile-user", "PIPFILE_PASSWORD", "PIPFILE_QUERY", "PIPFILE_RAW_REF", "PIPFILE_RAW_LOCK_REF",
+        ):
+            self.assertNotIn(secret, serialized)
 
     def test_structurally_invalid_python_fields_cannot_render_complete(self) -> None:
         (self.project / "pyproject.toml").write_text("[project]\ndependencies = \"requests\"\n", encoding="utf-8")

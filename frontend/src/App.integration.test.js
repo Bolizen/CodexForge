@@ -688,7 +688,7 @@ test("late dependency history cannot cross project selection", async () => {
 });
 
 test("Workspace Overview approves one eligible snapshot and stays synchronized with Reports", async () => {
-  const fingerprint = `cfdb1_${"7".repeat(64)}`;
+  const fingerprint = `cfdb2_${"7".repeat(64)}`;
   const current = trustedBaselineScan(109, trustedBaselineFixture({
     approval: { eligible: true, fingerprint, reason: "" },
   }));
@@ -731,7 +731,7 @@ test("Workspace Overview approves one eligible snapshot and stays synchronized w
 
 test("an obsolete Overview baseline failure cannot replace the newly selected project state", async () => {
   const eligibleA = trustedBaselineScan(108, trustedBaselineFixture({
-    approval: { eligible: true, fingerprint: `cfdb1_${"6".repeat(64)}`, reason: "" },
+    approval: { eligible: true, fingerprint: `cfdb2_${"6".repeat(64)}`, reason: "" },
   }));
   await renderApp();
   await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [eligibleA] });
@@ -755,7 +755,7 @@ test("an obsolete Overview baseline failure cannot replace the newly selected pr
 
 test("eligible dependency snapshot approval uses the real handler and refreshes active history", async () => {
   const current = trustedBaselineScan(110, trustedBaselineFixture({
-    approval: { eligible: true, fingerprint: `cfdb1_${"a".repeat(64)}`, reason: "" },
+    approval: { eligible: true, fingerprint: `cfdb2_${"a".repeat(64)}`, reason: "" },
   }));
   await renderApp();
   await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [current] });
@@ -774,7 +774,7 @@ test("eligible dependency snapshot approval uses the real handler and refreshes 
   assert.deepEqual(approvalRequest.body, {
     project_path: PROJECT_A_PATH,
     scan_id: 110,
-    fingerprint: `cfdb1_${"a".repeat(64)}`,
+    fingerprint: `cfdb2_${"a".repeat(64)}`,
     note: "Approved after local review.",
     replace: false,
   });
@@ -812,7 +812,7 @@ test("legacy empty and incomplete dependency analyses cannot expose a trust acti
     approval: { eligible: false, fingerprint: "", reason: "The dependency snapshot schema is incompatible." },
   }));
   const historicalEligible = trustedBaselineScan(109, trustedBaselineFixture({
-    approval: { eligible: true, fingerprint: `cfdb1_${"8".repeat(64)}`, reason: "" },
+    approval: { eligible: true, fingerprint: `cfdb2_${"8".repeat(64)}`, reason: "" },
   }));
   await renderApp();
   await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [incomplete, empty, legacy, incompatible, historicalEligible] });
@@ -880,7 +880,7 @@ test("trusted baseline replacement and clearing require confirmation and refresh
   assert.equal(replaceRequest.body.replace, true);
   assert.equal(Object.hasOwn(replaceRequest.body, "snapshot"), false);
   await respond(replaceRequest, { configured: true });
-  current = trustedBaselineScan(114, configuredTrustedBaseline("identical", { fingerprint: `cfdb1_${"c".repeat(64)}` }));
+  current = trustedBaselineScan(114, configuredTrustedBaseline("identical", { fingerprint: `cfdb2_${"c".repeat(64)}` }));
   await respond(await fetchHarness.next("/api/scans/history", { projectPath: PROJECT_A_PATH }), { scans: [current] });
 
   confirmed = false;
@@ -893,14 +893,14 @@ test("trusted baseline replacement and clearing require confirmation and refresh
   await respond(clearRequest, { configured: false, cleared: true });
   await respond(await fetchHarness.next("/api/scans/history", { projectPath: PROJECT_A_PATH }), {
     scans: [trustedBaselineScan(114, trustedBaselineFixture({
-      approval: { eligible: true, fingerprint: `cfdb1_${"c".repeat(64)}`, reason: "" },
+      approval: { eligible: true, fingerprint: `cfdb2_${"c".repeat(64)}`, reason: "" },
     }))],
   });
   assert.match(document.querySelector("#reports .trusted-baseline").textContent, /Not configured/);
 });
 
 test("trusted baseline note editing preserves snapshot identity and uses the scoped mutation handler", async () => {
-  const fingerprint = `cfdb1_${"9".repeat(64)}`;
+  const fingerprint = `cfdb2_${"9".repeat(64)}`;
   const current = trustedBaselineScan(123, configuredTrustedBaseline("identical", { fingerprint }));
   await renderApp();
   await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [current] });
@@ -929,12 +929,12 @@ test("trusted baseline note editing preserves snapshot identity and uses the sco
 
   const panel = document.querySelector("#reports .trusted-baseline");
   assert.match(panel.textContent, /Updated project-scoped approval note/);
-  assert.match(panel.textContent, /cfdb1_999999\.\.\.999999/);
+  assert.match(panel.textContent, /cfdb2_999999\.\.\.999999/);
 });
 
 test("obsolete trusted baseline responses and approval drafts cannot cross project selection", async () => {
   const eligibleA = trustedBaselineScan(115, trustedBaselineFixture({
-    approval: { eligible: true, fingerprint: `cfdb1_${"d".repeat(64)}`, reason: "" },
+    approval: { eligible: true, fingerprint: `cfdb2_${"d".repeat(64)}`, reason: "" },
   }));
   await renderApp();
   await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [eligibleA] });
@@ -948,7 +948,7 @@ test("obsolete trusted baseline responses and approval drafts cannot cross proje
   assert.equal(obsolete.signal.aborted, true);
   const eligibleB = {
     ...trustedBaselineScan(116, trustedBaselineFixture({
-      approval: { eligible: true, fingerprint: `cfdb1_${"e".repeat(64)}`, reason: "" },
+      approval: { eligible: true, fingerprint: `cfdb2_${"e".repeat(64)}`, reason: "" },
     })),
     project_path: PROJECT_B_PATH,
   };
@@ -963,7 +963,7 @@ test("obsolete trusted baseline responses and approval drafts cannot cross proje
 
 test("a current trusted baseline failure is scoped and does not trigger a success refresh", async () => {
   const eligible = trustedBaselineScan(122, trustedBaselineFixture({
-    approval: { eligible: true, fingerprint: `cfdb1_${"1".repeat(64)}`, reason: "" },
+    approval: { eligible: true, fingerprint: `cfdb2_${"1".repeat(64)}`, reason: "" },
   }));
   await renderApp();
   await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [eligible] });
@@ -979,7 +979,7 @@ test("a current trusted baseline failure is scoped and does not trigger a succes
 
 test("unregistering aborts an in-flight trusted baseline mutation", async () => {
   const eligible = trustedBaselineScan(121, trustedBaselineFixture({
-    approval: { eligible: true, fingerprint: `cfdb1_${"f".repeat(64)}`, reason: "" },
+    approval: { eligible: true, fingerprint: `cfdb2_${"f".repeat(64)}`, reason: "" },
   }));
   await renderApp();
   await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [eligible] });
@@ -1847,13 +1847,13 @@ function configuredTrustedBaseline(status, overrides = {}) {
     configured: true,
     valid: true,
     status: "configured",
-    fingerprint: `cfdb1_${"b".repeat(64)}`,
+    fingerprint: `cfdb2_${"b".repeat(64)}`,
     sourceScanId: 100,
     sourceScanDate: "2026-07-10T12:00:00Z",
     createdAt: "2026-07-10T12:00:00Z",
     updatedAt: "2026-07-10T12:00:00Z",
     note: "Reviewed baseline.",
-    approval: { eligible: true, fingerprint: `cfdb1_${"c".repeat(64)}`, reason: "" },
+    approval: { eligible: true, fingerprint: `cfdb2_${"c".repeat(64)}`, reason: "" },
     comparison: {
       status,
       explanation: status === "identical" ? "Matches approved baseline." : `${status} trusted baseline comparison.`,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import tempfile
@@ -14,10 +15,12 @@ from pydantic import ValidationError
 from app import database, main
 from app.schemas import ProjectPathRequest, TrustedDependencyBaselineApprove, TrustedDependencyBaselineNote
 from app.trusted_dependency_baseline import (
+    BASELINE_SCHEMA_VERSION,
     BaselineError,
     MAX_ENTRIES,
     approval_for_analysis,
     compare_with_baseline,
+    public_baseline,
     snapshot_fingerprint,
     snapshot_from_analysis,
     snapshot_json,
@@ -64,7 +67,7 @@ def entry(name: str, *, direct: bool = True, **overrides: object) -> dict[str, o
 def baseline_row(snapshot: dict[str, object], project: str = "C:/workspace/project") -> dict[str, object]:
     return {
         "project_path": project,
-        "baseline_schema_version": 1,
+        "baseline_schema_version": BASELINE_SCHEMA_VERSION,
         "dependency_schema_version": 1,
         "fingerprint": snapshot_fingerprint(snapshot),
         "snapshot_json": snapshot_json(snapshot),
@@ -74,6 +77,10 @@ def baseline_row(snapshot: dict[str, object], project: str = "C:/workspace/proje
         "created_at": "2026-07-13T10:00:00+00:00",
         "updated_at": "2026-07-13T10:00:00+00:00",
     }
+
+
+def vcs_identity(selector: str, value: str) -> str:
+    return f"{selector}:sha256:{hashlib.sha256(value.encode('utf-8')).hexdigest()}"
 
 
 class BaselineIdentityTests(unittest.TestCase):
@@ -87,10 +94,70 @@ class BaselineIdentityTests(unittest.TestCase):
             entry("beta", direct=False),
         ], ecosystems=["node", "python"], packageManagers=["npm", "pip"]))
         self.assertEqual(snapshot_fingerprint(first), snapshot_fingerprint(second))
-        self.assertRegex(snapshot_fingerprint(first), r"^cfdb1_[0-9a-f]{64}$")
-        incompatible = {**first, "baselineSchemaVersion": 2}
+        self.assertRegex(snapshot_fingerprint(first), r"^cfdb2_[0-9a-f]{64}$")
+        incompatible = {**first, "baselineSchemaVersion": 1}
         with self.assertRaises(BaselineError):
             snapshot_fingerprint(incompatible)
+
+    def test_vcs_revision_identity_is_stable_distinct_and_schema_versioned(self) -> None:
+        original = analysis([entry(
+            "vcsdep", sourceType="vcs", sourceIdentifier="github.com",
+            requestedSpecification="https://github.com/org/repo.git",
+            vcsRequestedRevision=vcs_identity("rev", "revision-one"),
+            vcsLockedRevision=vcs_identity("reference", "revision-one"),
+            vcsResolvedRevision=vcs_identity("resolved", "a" * 40),
+        )])
+        identical = analysis([dict(original["entries"][0])])
+        changed = analysis([entry(
+            "vcsdep", sourceType="vcs", sourceIdentifier="github.com",
+            requestedSpecification="https://github.com/org/repo.git",
+            vcsRequestedRevision=vcs_identity("rev", "revision-two"),
+            vcsLockedRevision=vcs_identity("reference", "revision-two"),
+            vcsResolvedRevision=vcs_identity("resolved", "b" * 40),
+        )])
+        tagged = analysis([entry(
+            "vcsdep", sourceType="vcs", sourceIdentifier="github.com",
+            requestedSpecification="https://github.com/org/repo.git",
+            vcsRequestedRevision=vcs_identity("tag", "revision-one"),
+        )])
+
+        original_snapshot = snapshot_from_analysis(original)
+        original_fingerprint = snapshot_fingerprint(original_snapshot)
+        self.assertEqual(original_fingerprint, snapshot_fingerprint(snapshot_from_analysis(identical)))
+        self.assertNotEqual(original_fingerprint, snapshot_fingerprint(snapshot_from_analysis(changed)))
+        self.assertNotEqual(original_fingerprint, snapshot_fingerprint(snapshot_from_analysis(tagged)))
+        drift = compare_with_baseline(changed, baseline_row(original_snapshot))
+        self.assertEqual(drift["status"], "drift")
+        self.assertIn("vcs-revision-changed", {change["changeType"] for change in drift["changes"]})
+
+    def test_legacy_baseline_without_vcs_identity_requires_reapproval(self) -> None:
+        current = analysis([entry(
+            "vcsdep", sourceType="vcs", sourceIdentifier="github.com",
+            requestedSpecification="https://github.com/org/repo.git",
+            vcsRequestedRevision=vcs_identity("rev", "revision-one"),
+        )])
+        current_snapshot = snapshot_from_analysis(current)
+        legacy_snapshot = {
+            **current_snapshot,
+            "baselineSchemaVersion": 1,
+            "entries": [{
+                key: value
+                for key, value in current_snapshot["entries"][0].items()
+                if key not in {"vcsRequestedRevision", "vcsLockedRevision", "vcsResolvedRevision"}
+            }],
+        }
+        legacy_row = {
+            **baseline_row(current_snapshot),
+            "baseline_schema_version": 1,
+            "fingerprint": "cfdb1_" + "0" * 64,
+            "snapshot_json": json.dumps(legacy_snapshot),
+        }
+
+        self.assertEqual(public_baseline(legacy_row)["status"], "invalid")
+        self.assertEqual(compare_with_baseline(current, legacy_row)["status"], "invalid")
+        approval = approval_for_analysis(current)
+        self.assertTrue(approval["eligible"])
+        self.assertRegex(approval["fingerprint"], r"^cfdb2_[0-9a-f]{64}$")
 
     def test_sensitive_or_unsafe_snapshot_values_are_rejected(self) -> None:
         unsafe_values = [
@@ -107,6 +174,8 @@ class BaselineIdentityTests(unittest.TestCase):
             entry("https://user:token@example.test/package?secret=yes"),
             entry("alpha", group="optional:https://user:token@example.test#secret"),
             entry("alpha", sourceIdentifier="a" * 201),
+            entry("alpha", sourceType="vcs", vcsRequestedRevision="rev:RAW_SECRET"),
+            entry("alpha", sourceType="registry", vcsRequestedRevision=vcs_identity("rev", "hidden")),
         ]
         for unsafe in unsafe_values:
             with self.subTest(unsafe=unsafe), self.assertRaises(BaselineError):
@@ -181,7 +250,7 @@ class BaselineComparisonTests(unittest.TestCase):
         row = baseline_row(snapshot)
         self.assertEqual(compare_with_baseline({"schemaVersion": 2}, row)["status"], "incompatible")
         self.assertEqual(compare_with_baseline(analysis([entry("alpha")]), {**row, "snapshot_json": "{"})["status"], "invalid")
-        self.assertEqual(compare_with_baseline(analysis([entry("alpha")]), {**row, "fingerprint": "cfdb1_" + "0" * 64})["status"], "invalid")
+        self.assertEqual(compare_with_baseline(analysis([entry("alpha")]), {**row, "fingerprint": "cfdb2_" + "0" * 64})["status"], "invalid")
         self.assertEqual(compare_with_baseline(analysis([entry("alpha")]), {**row, "baseline_schema_version": "corrupt"})["status"], "invalid")
         self.assertEqual(compare_with_baseline(analysis([entry("alpha")]), {**row, "dependency_schema_version": 2})["status"], "invalid")
 
@@ -297,7 +366,7 @@ class TrustedBaselineApiTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as stale_fingerprint:
             main.approve_trusted_dependency_baseline(TrustedDependencyBaselineApprove(
                 project_path=str(self.project), scan_id=second["id"],
-                fingerprint="cfdb1_" + "0" * 64, replace=True,
+                fingerprint="cfdb2_" + "0" * 64, replace=True,
             ))
         self.assertEqual(stale_fingerprint.exception.status_code, 409)
         with self.assertRaises(HTTPException) as historical:
@@ -331,7 +400,7 @@ class TrustedBaselineApiTests(unittest.TestCase):
         fingerprint = first["dependencyTrust"]["trustedBaseline"]["approval"]["fingerprint"]
         with self.assertRaises(HTTPException) as stale:
             main.approve_trusted_dependency_baseline(TrustedDependencyBaselineApprove(
-                project_path=str(self.project), scan_id=first["id"], fingerprint="cfdb1_" + "0" * 64,
+                project_path=str(self.project), scan_id=first["id"], fingerprint="cfdb2_" + "0" * 64,
             ))
         self.assertEqual(stale.exception.status_code, 409)
         with self.assertRaises(ValidationError):
@@ -354,7 +423,7 @@ class TrustedBaselineApiTests(unittest.TestCase):
         self.assertFalse(empty["dependencyTrust"]["trustedBaseline"]["approval"]["eligible"])
         with self.assertRaises(HTTPException) as ineligible:
             main.approve_trusted_dependency_baseline(TrustedDependencyBaselineApprove(
-                project_path=str(self.project), scan_id=empty["id"], fingerprint="cfdb1_" + "0" * 64,
+                project_path=str(self.project), scan_id=empty["id"], fingerprint="cfdb2_" + "0" * 64,
             ))
         self.assertEqual(ineligible.exception.status_code, 409)
         with self.assertRaises(ValidationError):
@@ -386,6 +455,38 @@ class TrustedBaselineApiTests(unittest.TestCase):
         self.assertIn("packages.example", stored)
         for sensitive in ("user", "token", "auth", "secret", "fragment", "?"):
             self.assertNotIn(sensitive, stored)
+
+    def test_approved_vcs_snapshot_persists_only_opaque_revision_identity(self) -> None:
+        source = "https://vcs-user:VCS_PASSWORD@github.com/org/repo.git?token=VCS_QUERY#VCS_FRAGMENT"
+        (self.project / "pyproject.toml").write_text(
+            "[tool.poetry.dependencies]\npython = \"^3.11\"\n"
+            f'vcsdep = {{ git = "{source}", rev = "RAW_VCS_SELECTOR" }}\n',
+            encoding="utf-8",
+        )
+        (self.project / "poetry.lock").write_text(
+            '[[package]]\nname = "vcsdep"\nversion = "0.0.0"\noptional = false\n'
+            f'[package.source]\ntype = "git"\nurl = "{source}"\n'
+            'reference = "RAW_LOCK_REFERENCE"\nresolved_reference = "RAW_RESOLVED_REFERENCE"\n',
+            encoding="utf-8",
+        )
+
+        scanned = main.run_scan(ProjectPathRequest(project_path=str(self.project)))
+        approved = self.approve(scanned)
+        with database.get_connection() as connection:
+            stored = connection.execute(
+                "SELECT snapshot_json FROM trusted_dependency_baselines WHERE project_path = ?", (str(self.project),),
+            ).fetchone()["snapshot_json"]
+
+        self.assertRegex(approved["fingerprint"], r"^cfdb2_[0-9a-f]{64}$")
+        self.assertIn("rev:sha256:", stored)
+        self.assertIn("reference:sha256:", stored)
+        self.assertIn("resolved:sha256:", stored)
+        serialized = json.dumps({"scan": scanned, "approved": approved, "stored": json.loads(stored)})
+        for secret in (
+            "vcs-user", "VCS_PASSWORD", "VCS_QUERY", "VCS_FRAGMENT", "RAW_VCS_SELECTOR",
+            "RAW_LOCK_REFERENCE", "RAW_RESOLVED_REFERENCE",
+        ):
+            self.assertNotIn(secret, serialized)
 
     def test_approval_revalidates_latest_scan_inside_the_write_transaction(self) -> None:
         scanned = self.scan(self.project)

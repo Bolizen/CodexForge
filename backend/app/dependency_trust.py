@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections import Counter, defaultdict
@@ -357,6 +358,7 @@ class _AnalysisState:
                     requestedSpecification=spec,
                     sourceType=source_type,
                     sourceIdentifier=source_host,
+                    vcsRequestedRevision=_vcs_fragment_identity("ref", raw_spec) if source_type == "vcs" else "",
                     dev=group == "devDependencies",
                     optional=group == "optionalDependencies",
                     peer=group == "peerDependencies",
@@ -515,6 +517,7 @@ class _AnalysisState:
             lockedVersion=_safe_text(version, 200),
             sourceType=source_type,
             sourceIdentifier=source_host,
+            vcsResolvedRevision=_vcs_resolved_identity(resolved) if source_type == "vcs" else "",
             integrity=_safe_text(integrity, 300),
             integrityPresent=bool(integrity),
             installScriptIndicator=package.get("hasInstallScript") is True,
@@ -641,6 +644,7 @@ class _AnalysisState:
                 requestedSpecification=parsed["spec"],
                 sourceType=parsed["sourceType"],
                 sourceIdentifier=parsed.get("sourceIdentifier", ""),
+                vcsRequestedRevision=parsed.get("vcsRequestedRevision", ""),
                 integrity=parsed.get("integrity", ""),
                 integrityPresent=parsed.get("integrityPresent", False),
                 optional=False, dev=False, peer=False,
@@ -792,7 +796,8 @@ class _AnalysisState:
         entry = _entry(
             "python", parsed["name"], group, direct=True,
             requestedSpecification=parsed["spec"], sourceType=parsed["sourceType"],
-            sourceIdentifier=parsed.get("sourceIdentifier", ""), optional=optional,
+            sourceIdentifier=parsed.get("sourceIdentifier", ""),
+            vcsRequestedRevision=parsed.get("vcsRequestedRevision", ""), optional=optional,
             dev=group.endswith("dev"), peer=False, manifestPath=relative,
         )
         if not self._append_entry(entry, locked=False):
@@ -817,7 +822,7 @@ class _AnalysisState:
             if str(raw_name).lower() == "python":
                 continue
             name = _normalize_python_name(str(raw_name))
-            spec, source_type, source_identifier = _poetry_spec(value)
+            spec, source_type, source_identifier, vcs_requested_revision = _poetry_spec(value)
             if source_type == "unknown" and not isinstance(value, dict):
                 self._python_structure_error(relative, "A Poetry dependency declaration has an unsupported structure.")
                 continue
@@ -830,6 +835,7 @@ class _AnalysisState:
                 "python", name, group, direct=True,
                 requestedSpecification=spec, sourceType=source_type,
                 sourceIdentifier=source_identifier, optional=isinstance(value, dict) and value.get("optional") is True,
+                vcsRequestedRevision=vcs_requested_revision,
                 dev=dev, peer=False, manifestPath=relative,
             )
             if not self._append_entry(entry, locked=False):
@@ -862,6 +868,8 @@ class _AnalysisState:
             version = _safe_text(package.get("version"), 200)
             source = package.get("source") if isinstance(package.get("source"), dict) else {}
             source_type, identifier = _classify_poetry_source(source)
+            vcs_locked_revision = _vcs_selector_identity("reference", source.get("reference")) if source_type == "vcs" else ""
+            vcs_resolved_revision = _vcs_selector_identity("resolved", source.get("resolved_reference")) if source_type == "vcs" else ""
             if package.get("files") is not None and not isinstance(package.get("files"), list):
                 self._python_structure_error(relative, "A Poetry lock entry has an invalid files list.", lockfile=True)
             files = package.get("files") if isinstance(package.get("files"), list) else []
@@ -873,6 +881,7 @@ class _AnalysisState:
             entry = _entry(
                 "python", name, "transitive", direct=False,
                 lockedVersion=version, sourceType=source_type, sourceIdentifier=identifier,
+                vcsLockedRevision=vcs_locked_revision, vcsResolvedRevision=vcs_resolved_revision,
                 integrity=integrity, integrityPresent=bool(hashes), lockfilePath=relative,
                 optional=package.get("optional") is True,
                 dev=str(package.get("category", "")).lower() == "dev", peer=False,
@@ -898,7 +907,7 @@ class _AnalysisState:
                 continue
             for raw_name, raw_value in sorted(packages.items(), key=lambda item: str(item[0]).lower()):
                 name = _normalize_python_name(str(raw_name))
-                spec, source_type, identifier = _pipfile_spec(raw_value)
+                spec, source_type, identifier, vcs_requested_revision = _pipfile_spec(raw_value)
                 if source_type == "unknown":
                     if isinstance(raw_value, dict):
                         self._unresolved_named_source(relative)
@@ -911,7 +920,8 @@ class _AnalysisState:
                 entry = _entry(
                     "python", name, group, direct=True,
                     requestedSpecification=spec, sourceType=source_type,
-                    sourceIdentifier=identifier, dev=dev, optional=False, peer=False,
+                    sourceIdentifier=identifier, vcsRequestedRevision=vcs_requested_revision,
+                    dev=dev, optional=False, peer=False,
                     manifestPath=relative,
                 )
                 if not self._append_entry(entry, locked=False):
@@ -939,7 +949,7 @@ class _AnalysisState:
                     continue
                 name = _normalize_python_name(str(raw_name))
                 version = str(package.get("version", "")).removeprefix("==")
-                source_type, identifier = _pipfile_spec(package)[1:]
+                _, source_type, identifier, _ = _pipfile_spec(package)
                 if source_type == "unknown":
                     self._unresolved_named_source(relative)
                 if package.get("hashes") is not None and not isinstance(package.get("hashes"), list):
@@ -953,7 +963,11 @@ class _AnalysisState:
                 self._append_entry(_entry(
                     "python", name, group, direct=True,
                     lockedVersion=_safe_text(version, 200), sourceType=source_type,
-                    sourceIdentifier=identifier, integrity=integrity,
+                    sourceIdentifier=identifier,
+                    vcsLockedRevision=(
+                        _vcs_selector_identity("reference", package.get("ref")) if source_type == "vcs" else ""
+                    ),
+                    integrity=integrity,
                     integrityPresent=bool(hashes), dev=dev, optional=False, peer=False,
                     lockfilePath=relative,
                 ), locked=True)
@@ -1217,7 +1231,10 @@ class _AnalysisState:
             merged = dict(direct)
             if locked:
                 matched_locked.add(id(locked))
-                for key in ("lockedVersion", "integrity", "integrityPresent", "installScriptIndicator", "lockfilePath"):
+                for key in (
+                    "lockedVersion", "integrity", "integrityPresent", "installScriptIndicator", "lockfilePath",
+                    "vcsLockedRevision", "vcsResolvedRevision",
+                ):
                     if key in locked:
                         merged[key] = locked[key]
                 if merged.get("sourceType") == "registry" and locked.get("sourceType"):
@@ -1429,7 +1446,10 @@ def _parse_requirement_line(line: str) -> dict[str, Any] | None:
     line, marker = _split_requirement_marker(line)
     if line.startswith(("git+", "hg+", "svn+", "bzr+")):
         name = _name_from_egg(line) or "unnamed-vcs-dependency"
-        return _requirement_result(name, _with_marker(line, marker), "vcs", "unpinned", hash_values, editable=editable)
+        return _requirement_result(
+            name, _with_marker(_sanitize_vcs_locator(line), marker), "vcs", "unpinned", hash_values,
+            editable=editable, vcs_requested_revision=_vcs_url_revision_identity(line),
+        )
     direct_match = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*(?:\[[^\]]+\])?)\s*@\s*(.+)$", line)
     if direct_match:
         name = _normalize_python_name(direct_match.group(1).split("[", 1)[0])
@@ -1437,7 +1457,11 @@ def _parse_requirement_line(line: str) -> dict[str, Any] | None:
         source_type, identifier = _classify_python_source(target, editable)
         if source_type == "registry":
             return None
-        return _requirement_result(name, _with_marker(target, marker), source_type, "unpinned", hash_values, identifier, editable)
+        return _requirement_result(
+            name, _with_marker(_sanitize_vcs_locator(target) if source_type == "vcs" else target, marker),
+            source_type, "unpinned", hash_values, identifier, editable,
+            _vcs_url_revision_identity(target) if source_type == "vcs" else "",
+        )
     if line.startswith(("http://", "https://")):
         name = _archive_name(line) or "unnamed-url-dependency"
         source_type, identifier = _classify_python_source(line, editable)
@@ -1468,6 +1492,7 @@ def _requirement_result(
     hashes: list[str],
     identifier: str = "",
     editable: bool = False,
+    vcs_requested_revision: str = "",
 ) -> dict[str, Any]:
     valid_hashes = [value for value in hashes if _integrity_status(value) == "valid"]
     return {
@@ -1475,6 +1500,7 @@ def _requirement_result(
         "spec": _sanitize_spec(spec),
         "sourceType": "local" if editable and source_type == "registry" else source_type,
         "sourceIdentifier": identifier,
+        "vcsRequestedRevision": vcs_requested_revision,
         "pinning": pinning,
         "integrity": valid_hashes[0] if valid_hashes else "",
         "integrityPresent": bool(hashes),
@@ -1690,37 +1716,47 @@ def _classify_poetry_source(source: dict[str, Any]) -> tuple[str, str]:
     return "registry", ""
 
 
-def _poetry_spec(value: Any) -> tuple[str, str, str]:
+def _poetry_spec(value: Any) -> tuple[str, str, str, str]:
     if isinstance(value, str):
-        return _safe_text(value, 300), "registry", ""
+        return _safe_text(value, 300), "registry", "", ""
     if not isinstance(value, dict):
-        return "", "unknown", ""
+        return "", "unknown", "", ""
     for key, source_type in (("git", "vcs"), ("url", "url"), ("path", "local")):
         if isinstance(value.get(key), str):
             raw = value[key]
             identifier = "local path" if source_type == "local" else _safe_url_host(raw, include_scheme=raw.startswith("http://"))
-            return _sanitize_spec(raw), source_type, identifier
+            revisions = "" if source_type != "vcs" else ",".join(filter(None, (
+                _vcs_selector_identity(selector, value.get(selector))
+                for selector in ("rev", "tag", "branch")
+            )))
+            return _sanitize_spec(raw), source_type, identifier, revisions
     version = value.get("version")
     if isinstance(value.get("source"), str) and value["source"].strip():
-        return _safe_text(version, 300), "unknown", "named source"
-    return _safe_text(version, 300), "registry", ""
+        return _safe_text(version, 300), "unknown", "named source", ""
+    return _safe_text(version, 300), "registry", "", ""
 
 
-def _pipfile_spec(value: Any) -> tuple[str, str, str]:
+def _pipfile_spec(value: Any) -> tuple[str, str, str, str]:
     if isinstance(value, str):
         source_type, identifier = _classify_python_source(value)
-        return _sanitize_spec(value), source_type, identifier
+        revision = _vcs_requested_url_identity(value) if source_type == "vcs" else ""
+        spec = _sanitize_vcs_locator(value) if source_type == "vcs" else _sanitize_spec(value)
+        return spec, source_type, identifier, revision
     if not isinstance(value, dict):
-        return "", "unknown", ""
+        return "", "unknown", "", ""
     for key, source_type in (("git", "vcs"), ("path", "local"), ("file", "local")):
         if isinstance(value.get(key), str):
             raw = value[key]
             identifier = "local path" if source_type == "local" else _safe_url_host(raw)
-            return _sanitize_spec(raw), source_type, identifier
+            revision = ""
+            if source_type == "vcs":
+                revision = _vcs_selector_identity("ref", value.get("ref")) or _vcs_requested_url_identity(raw)
+            spec = _sanitize_vcs_locator(raw) if source_type == "vcs" else _sanitize_spec(raw)
+            return spec, source_type, identifier, revision
     version = value.get("version", "")
     if isinstance(value.get("index"), str) and value["index"].strip():
-        return _safe_text(version, 300), "unknown", "named source"
-    return _safe_text(version, 300), "registry", ""
+        return _safe_text(version, 300), "unknown", "named source", ""
+    return _safe_text(version, 300), "registry", "", ""
 
 
 def _sanitize_spec(value: Any) -> str:
@@ -1793,6 +1829,67 @@ def _sanitize_source_identifier(value: Any) -> str:
     if re.match(r"^[A-Za-z]:[\\/]", text) or text.startswith(("/", "\\")):
         return "local path"
     return text
+
+
+def _vcs_selector_identity(selector: str, value: Any) -> str:
+    if not isinstance(value, str) or not value:
+        return ""
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return f"{selector}:sha256:{digest}"
+
+
+def _vcs_url_revision_identity(value: str) -> str:
+    return _vcs_selector_identity("rev", _vcs_url_revision_value(value))
+
+
+def _vcs_url_revision_value(value: str) -> str:
+    candidate = value.split("#", 1)[0]
+    for prefix in ("git+", "hg+", "svn+", "bzr+"):
+        if candidate.startswith(prefix):
+            candidate = candidate[len(prefix):]
+            break
+    revision = ""
+    try:
+        parsed = urlsplit(candidate)
+        if parsed.hostname and "@" in parsed.path:
+            revision = parsed.path.rsplit("@", 1)[1]
+    except ValueError:
+        revision = ""
+    if not revision:
+        scp_match = re.match(r"^(?:[^@\s]+@)?[^:\s]+:(.+)$", candidate)
+        if scp_match and "@" in scp_match.group(1):
+            revision = scp_match.group(1).rsplit("@", 1)[1]
+    return revision
+
+
+def _vcs_fragment_identity(selector: str, value: str) -> str:
+    fragment = value.split("#", 1)[1] if "#" in value else ""
+    return _vcs_selector_identity(selector, fragment)
+
+
+def _vcs_requested_url_identity(value: str) -> str:
+    return _vcs_url_revision_identity(value) or _vcs_fragment_identity("ref", value)
+
+
+def _vcs_resolved_identity(value: str) -> str:
+    revision = _vcs_url_revision_value(value)
+    if not revision and "#" in value:
+        revision = value.split("#", 1)[1]
+    return _vcs_selector_identity("resolved", revision)
+
+
+def _sanitize_vcs_locator(value: str) -> str:
+    sanitized = _sanitize_spec(value)
+    if "://" in sanitized:
+        try:
+            parsed = urlsplit(sanitized)
+            path = parsed.path.rsplit("@", 1)[0] if "@" in parsed.path else parsed.path
+            return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+        except ValueError:
+            return "malformed remote source"
+    if sanitized.startswith("vcs:") and "@" in sanitized:
+        return sanitized.rsplit("@", 1)[0]
+    return sanitized
 
 
 def _integrity_status(value: str) -> str:
@@ -1964,13 +2061,15 @@ def _direct_key(entry: dict[str, Any]) -> tuple[str, str, str]:
     return (str(entry.get("ecosystem", "")), str(entry.get("name", "")), str(entry.get("group", "")))
 
 
-def _locked_key(entry: dict[str, Any]) -> tuple[str, str, str, str, str]:
+def _locked_key(entry: dict[str, Any]) -> tuple[str, ...]:
     return (
         str(entry.get("ecosystem", "")),
         str(entry.get("name", "")),
         str(entry.get("lockedVersion", "")),
         str(entry.get("sourceType", "")),
         str(entry.get("sourceIdentifier", "")),
+        str(entry.get("vcsLockedRevision", "")),
+        str(entry.get("vcsResolvedRevision", "")),
     )
 
 
@@ -1982,6 +2081,9 @@ def _entry_sort_key(entry: dict[str, Any]) -> tuple[Any, ...]:
         entry.get("group", ""),
         entry.get("lockedVersion", ""),
         entry.get("sourceType", ""),
+        entry.get("vcsRequestedRevision", ""),
+        entry.get("vcsLockedRevision", ""),
+        entry.get("vcsResolvedRevision", ""),
     )
 
 
