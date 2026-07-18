@@ -51,6 +51,22 @@ def is_dependency_metadata(relative_path: str) -> bool:
     )
 
 
+def decode_json_object(content: bytes) -> tuple[dict[str, Any] | None, str | None]:
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return None, "invalid-utf8"
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return None, "invalid-json-syntax"
+    except RecursionError:
+        return None, "excessive-json-nesting"
+    if not isinstance(data, dict):
+        return None, "top-level-json-not-object"
+    return data, None
+
+
 def analyze_dependencies(
     project_path: Path,
     inputs: list[tuple[Path, str]],
@@ -1356,23 +1372,22 @@ class _AnalysisState:
 
 
 def _json_object(content: bytes, state: _AnalysisState, relative: str, finding_type: str) -> dict[str, Any] | None:
-    try:
-        data = json.loads(content.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+    data, reason = decode_json_object(content)
+    if reason is not None:
         state.malformed = True
         state.failed_files.add(relative)
+        invalid_type = reason == "top-level-json-not-object"
         state.add_finding(
-            finding_type, "high" if finding_type.endswith("manifest-parse-error") else "medium",
-            "Dependency JSON metadata is malformed and could not be analyzed reliably.",
-            "Correct or regenerate the dependency metadata and rescan.", path=relative,
-        )
-        return None
-    if not isinstance(data, dict):
-        state.malformed = True
-        state.failed_files.add(relative)
-        state.add_finding(
-            finding_type, "medium", "Dependency JSON metadata is not an object.",
-            "Correct or regenerate the dependency metadata and rescan.", path=relative,
+            finding_type,
+            "medium" if invalid_type else "high" if finding_type.endswith("manifest-parse-error") else "medium",
+            (
+                "Dependency JSON metadata is not an object."
+                if invalid_type
+                else "Dependency JSON metadata is malformed and could not be analyzed reliably."
+            ),
+            "Correct or regenerate the dependency metadata and rescan.",
+            path=relative,
+            metadata={"reason": reason},
         )
         return None
     return data

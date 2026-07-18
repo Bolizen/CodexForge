@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from typing import Any
 
-from .dependency_trust import MAX_DEPENDENCY_BYTES, analyze_dependencies, is_dependency_metadata
+from .dependency_trust import (
+    MAX_DEPENDENCY_BYTES,
+    analyze_dependencies,
+    decode_json_object,
+    is_dependency_metadata,
+)
 from .safety import has_multiple_hardlinks, is_reparse_point_or_symlink
 
 
@@ -332,16 +336,18 @@ def _inspect_file_content(
     if not is_package_json:
         return findings, lifecycle_scripts, None
 
-    try:
-        data = json.loads(content.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        findings.append(_finding(
+    data, parse_issue = decode_json_object(content)
+    if parse_issue is not None:
+        findings.append(_inspection_finding(
             relative_path,
             "package-json-read-error",
             "medium",
-            "package.json could not be parsed. Review it manually before installing dependencies.",
+            "package.json could not be safely parsed as a JSON object, so its lifecycle scripts were not inspected.",
+            "Correct or regenerate package.json and rescan before installing dependencies.",
+            operation="parse-package-json",
+            reason=parse_issue,
         ))
-        return findings, lifecycle_scripts, None
+        return findings, lifecycle_scripts, "fileInspectionFailureCount"
 
     scripts = data.get("scripts")
     if not isinstance(scripts, dict):

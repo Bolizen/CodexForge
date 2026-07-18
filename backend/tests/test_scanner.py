@@ -224,6 +224,98 @@ class ScannerCompletenessTests(unittest.TestCase):
         self.project_path.mkdir()
         self.addCleanup(self.temporary_directory.cleanup)
 
+    def assert_package_json_failure(self, result: dict[str, object], reason: str) -> None:
+        self.assertFalse(result["scanCompleteness"]["complete"])
+        self.assertEqual(result["scanCompleteness"]["fileInspectionFailureCount"], 1)
+        self.assertEqual(result["scanCompleteness"]["dependencyAnalysisFailureCount"], 0)
+        self.assertEqual(result["dependencyTrust"]["status"], "malformed")
+        self.assertIn("package.json", result["dependencyTrust"]["failedFiles"])
+        self.assertNotIn("package.json", result["reviewedFiles"])
+        finding = next(
+            finding
+            for finding in result["findings"]
+            if finding["type"] == "dependency-manifest-parse-error"
+            and finding["path"] == "package.json"
+        )
+        self.assertEqual(finding["metadata"]["reason"], reason)
+
+    def test_non_object_package_json_is_incomplete_and_scan_continues(self) -> None:
+        (self.project_path / "zzz.ps1").write_text(
+            "Invoke-Expression $payload",
+            encoding="utf-8",
+        )
+
+        for name, content in {
+            "null": "null",
+            "array": "[]",
+            "string": '"text"',
+            "number": "7",
+        }.items():
+            with self.subTest(name=name):
+                (self.project_path / "package.json").write_text(content, encoding="utf-8")
+
+                result = scan_project(self.project_path)
+
+                self.assert_package_json_failure(result, "top-level-json-not-object")
+                self.assertEqual(result["lifecycleScripts"], [])
+                self.assertIn("zzz.ps1", result["reviewedFiles"])
+                self.assertTrue(any(
+                    finding["type"] == "suspicious-text-pattern"
+                    and finding["path"] == "zzz.ps1"
+                    for finding in result["findings"]
+                ))
+
+    def test_malformed_package_json_syntax_is_explicitly_incomplete(self) -> None:
+        (self.project_path / "package.json").write_text(
+            '{"scripts":',
+            encoding="utf-8",
+        )
+
+        result = scan_project(self.project_path)
+
+        self.assert_package_json_failure(result, "invalid-json-syntax")
+
+    def test_invalid_utf8_package_json_is_explicitly_incomplete(self) -> None:
+        (self.project_path / "package.json").write_bytes(b"{\xff}")
+
+        result = scan_project(self.project_path)
+
+        self.assert_package_json_failure(result, "invalid-utf8")
+
+    def test_deeply_nested_package_json_is_explicitly_incomplete(self) -> None:
+        depth = 5_000
+        content = '{"scripts":' + ('{"x":' * depth) + "null" + ("}" * depth) + "}"
+        (self.project_path / "package.json").write_text(content, encoding="utf-8")
+
+        result = scan_project(self.project_path)
+
+        self.assert_package_json_failure(result, "excessive-json-nesting")
+
+    def test_valid_package_json_preserves_dependency_and_lifecycle_inspection(self) -> None:
+        (self.project_path / "package.json").write_text(
+            '{"scripts":{"postinstall":"node setup.js"},"dependencies":{"alpha":"1.0.0"}}',
+            encoding="utf-8",
+        )
+        (self.project_path / "package-lock.json").write_text(
+            '{"lockfileVersion":3,"packages":{"":{"dependencies":{"alpha":"1.0.0"}},'
+            '"node_modules/alpha":{"version":"1.0.0","resolved":'
+            '"https://registry.npmjs.org/alpha/-/alpha-1.0.0.tgz","integrity":"sha512-AAAA"}}}',
+            encoding="utf-8",
+        )
+
+        result = scan_project(self.project_path)
+
+        self.assertTrue(result["scanCompleteness"]["complete"])
+        self.assertEqual(result["dependencyTrust"]["status"], "complete")
+        self.assertEqual(result["lifecycleScripts"], [{"path": "package.json", "script": "postinstall"}])
+        self.assertTrue(any(
+            entry["name"] == "alpha"
+            and entry["requestedSpecification"] == "1.0.0"
+            and entry["manifestPath"] == "package.json"
+            for entry in result["dependencyTrust"]["entries"]
+        ))
+        self.assertIn("package.json", result["reviewedFiles"])
+
     def test_successful_scan_reports_complete(self) -> None:
         (self.project_path / "safe.txt").write_text("ordinary content", encoding="utf-8")
 
