@@ -26,11 +26,13 @@ def allowed_cors_origins(value: str | None = None) -> list[str]:
     return origins
 
 
-def desktop_auth_token(value: str | None = None, *, environment: bool = True) -> str | None:
+def desktop_auth_token(value: str | None = None, *, environment: bool = True) -> str:
     configured = os.getenv(DESKTOP_AUTH_TOKEN_ENV) if environment else value
-    if configured is None:
-        return None
-    if len(configured) != 64 or any(character not in "0123456789abcdef" for character in configured):
+    if (
+        configured is None
+        or len(configured) != 64
+        or any(character not in "0123456789abcdef" for character in configured)
+    ):
         raise ValueError(f"{DESKTOP_AUTH_TOKEN_ENV} must be a 256-bit lowercase hexadecimal token")
     return configured
 

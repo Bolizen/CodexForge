@@ -306,13 +306,8 @@ fn launch_backend(
     token: &str,
     diagnostics: Arc<StartupDiagnostics>,
 ) -> Result<LaunchedBackend, StartupError> {
-    let specification = backend_command(&paths.debug_backend);
-    let mut command = Command::new(&specification.executable);
+    let mut command = authenticated_backend_command(&paths.debug_backend, token, &paths.data_dir);
     command
-        .args(specification.arguments)
-        .current_dir(&specification.working_directory)
-        .env(AUTH_TOKEN_ENV, token)
-        .env(DATA_DIR_ENV, &paths.data_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -488,6 +483,18 @@ fn backend_command(paths: &BackendPaths) -> BackendCommand {
         working_directory: paths.backend.clone(),
         arguments: ["-m", "app.desktop_entry"],
     }
+}
+
+#[cfg(debug_assertions)]
+fn authenticated_backend_command(paths: &BackendPaths, token: &str, data_dir: &Path) -> Command {
+    let specification = backend_command(paths);
+    let mut command = Command::new(&specification.executable);
+    command
+        .args(specification.arguments)
+        .current_dir(&specification.working_directory)
+        .env(AUTH_TOKEN_ENV, token)
+        .env(DATA_DIR_ENV, data_dir);
+    command
 }
 
 #[cfg(debug_assertions)]
@@ -822,15 +829,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn development_command_uses_structured_arguments_without_port_or_token() {
+    fn development_command_uses_the_supervisor_token_without_serializing_it() {
         let paths = BackendPaths {
             backend: PathBuf::from(r"Z:\repo\backend"),
             python: PathBuf::from(r"Z:\repo\backend\.venv\Scripts\python.exe"),
         };
-        let command = backend_command(&paths);
-        assert_eq!(command.executable, paths.python);
-        assert_eq!(command.working_directory, paths.backend);
-        assert_eq!(command.arguments, ["-m", "app.desktop_entry"]);
+        let data_dir = PathBuf::from(r"C:\Users\developer\AppData\Local\Glacial\data");
+        let token = "a".repeat(64);
+        let command = authenticated_backend_command(&paths, &token, &data_dir);
+        assert_eq!(command.get_program(), paths.python.as_os_str());
+        assert_eq!(command.get_current_dir(), Some(paths.backend.as_path()));
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [
+                std::ffi::OsStr::new("-m"),
+                std::ffi::OsStr::new("app.desktop_entry")
+            ],
+        );
+        assert!(command.get_envs().any(|(name, value)| {
+            name == std::ffi::OsStr::new(AUTH_TOKEN_ENV)
+                && value == Some(std::ffi::OsStr::new(&token))
+        }));
+        assert!(command.get_envs().any(|(name, value)| {
+            name == std::ffi::OsStr::new(DATA_DIR_ENV) && value == Some(data_dir.as_os_str())
+        }));
     }
 
     #[test]

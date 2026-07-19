@@ -6,7 +6,7 @@ This document defines the security boundary Glacial is designed to support. A sc
 
 Glacial's supported security deployment is the Windows desktop application: a Tauri frontend supervises a FastAPI backend bound to loopback on an ephemeral port. The supervisor generates a fresh 256-bit token for each backend launch, passes it to the backend, and attaches it to proxied API requests.
 
-The separately started local development frontend and backend are a supported development compatibility surface, but they do not currently provide the same authentication guarantee. When `GLACIAL_DESKTOP_AUTH_TOKEN` is absent, the backend accepts tokenless API requests. This is an unresolved, security-sensitive compatibility issue; loopback reachability and CORS are not authentication. Development instances must be used only in an environment where every process and OS user able to reach the selected port is accepted for that session.
+The supported full-stack development workflow uses the Tauri development runner and the same generated-token and API-bridge boundary. A standalone development backend is supported only with an explicit, ephemeral 256-bit token supplied through `GLACIAL_DESKTOP_AUTH_TOKEN` and an authenticated client. Missing, empty, or malformed token configuration prevents backend startup. Direct browser-to-backend Vite development is unsupported because browser-visible configuration is not an acceptable token store. Loopback reachability and CORS are not authentication.
 
 Remote service deployment is unsupported. Do not bind Glacial to `0.0.0.0`, a LAN address, a public interface, a container ingress, or a reverse proxy.
 
@@ -20,7 +20,7 @@ Glacial must inspect these inputs without executing project code, package script
 
 ### Local API
 
-Other local processes and other OS users are not trusted API clients merely because they can reach loopback. In the normal packaged application, only requests authenticated with the fresh token held by the Tauri supervisor are trusted. The tokenless development behavior above is an acknowledged mismatch with this boundary, not an exception that makes localhost trusted.
+Other local processes and other OS users are not trusted API clients merely because they can reach loopback. In packaged and Tauri development launches, only requests authenticated with the fresh token held by the supervisor are trusted. Standalone backend requests require the explicitly configured ephemeral token.
 
 ### Workspace roots and filesystem authority
 
@@ -48,9 +48,9 @@ For supported deployments and assumptions, Glacial must:
 
 Older scans without completeness metadata are **Unknown**, not Complete. Review acknowledgements and trusted dependency baselines do not convert incomplete coverage into verified coverage.
 
-## Decisions for unresolved findings
+## Decisions for triaged findings
 
-- **AUTH-001:** Cross-process and cross-user loopback clients are outside the trusted API boundary. The packaged application enforces the boundary with its fresh supervisor token. Default tokenless development-server behavior remains an unresolved security issue and should be fixed without treating loopback or CORS as authentication.
+- **AUTH-001:** Cross-process and cross-user loopback clients are outside the trusted API boundary. Packaged and Tauri development launches enforce the boundary with a fresh supervisor token; standalone backend startup requires an explicit valid token and never treats missing configuration as authorization.
 - **BWRITE-001:** Exploitation requires authority to rename or replace the selected project directory. Adversarially replaceable project roots are unsupported, so Glacial is not a security mediator against that actor. Binding Windows publication and cleanup to a validated directory identity remains desirable defense in depth.
 - **BWRITE-002:** A workspace root replaceable by an adversarial principal is unsupported. This assumption does not prove pathname-based re-resolution safe; revalidating or retaining workspace-root directory identity remains desirable defense in depth.
 

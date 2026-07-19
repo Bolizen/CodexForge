@@ -39,7 +39,7 @@ Each software version becomes available under the Apache License, Version 2.0 on
 
 ## Setup
 
-Clone the repository and open two terminals from the repo root.
+Clone the repository and prepare the backend and frontend dependencies from the repo root.
 
 Clean-room setup and verification have been completed with Python 3.12.13 and Python 3.13.13, Node.js 24.16.0, and npm 11.13.0. These are verified versions, not declared minimum-version guarantees.
 
@@ -58,7 +58,6 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.lock.txt
 .\.venv\Scripts\python.exe -m pip check
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 If `python` is not available as a Windows command, try `py -3 -m venv .venv`. If neither launcher is on `PATH`, invoke an installed Python executable by its full path to create `.venv`; use `.\.venv\Scripts\python.exe` for all remaining backend commands.
@@ -71,7 +70,6 @@ python -m venv .venv
 ./.venv/bin/python -m pip install -r requirements.lock.txt
 ./.venv/bin/python -m pip check
 ./.venv/bin/python -m unittest discover -s tests -v
-./.venv/bin/python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 If `requirements.lock.txt` is not present, install from `requirements.txt` instead. The API runs at `http://127.0.0.1:8000` by default. On Windows without permission to create symlinks, three real symlink integration tests are expected to skip; the deterministic link and reparse-point tests still run.
@@ -84,30 +82,50 @@ npm ci --ignore-scripts
 npm test
 npm run build
 npm audit --ignore-scripts
-npm run dev
 ```
 
-On Windows PowerShell, use the corresponding `npm.cmd ci --ignore-scripts`, `npm.cmd test`, `npm.cmd run build`, `npm.cmd audit --ignore-scripts`, and `npm.cmd run dev` commands.
+On Windows PowerShell, use the corresponding `npm.cmd ci --ignore-scripts`, `npm.cmd test`, `npm.cmd run build`, and `npm.cmd audit --ignore-scripts` commands.
 
-The app runs at `http://127.0.0.1:5173`.
+### Authenticated development
+
+The supported full-stack development workflow is the Tauri development runner:
+
+```powershell
+cd frontend
+npm.cmd run tauri:dev
+```
+
+Tauri starts the Vite frontend on `127.0.0.1`, generates a fresh 256-bit token, starts the backend on an ephemeral loopback port with that token in its environment, and attaches the token inside the API bridge. The token is not placed in Vite configuration, browser storage, application responses, or the database.
+
+Do not use a browser-opened `npm run dev` session as an API client. Browser-visible Vite environment variables are not an acceptable place for the backend token.
 
 ### Local service configuration
 
-The frontend sends API requests to `http://127.0.0.1:8000` by default. Set `VITE_API_BASE_URL` before `npm run dev` or `npm run build` to use another backend base URL:
+Backend-only debugging requires an explicit ephemeral token. Generate it into the current shell environment without printing it, then start Uvicorn on loopback:
 
 ```powershell
-$env:VITE_API_BASE_URL = "http://127.0.0.1:8010"
-npm.cmd run dev
-```
-
-The backend accepts browser requests from `http://127.0.0.1:5173` and `http://localhost:5173` by default. Set `GLACIAL_CORS_ORIGINS` to a comma-separated list of explicit HTTP or HTTPS origins when the frontend uses other origins. Wildcards, credentials, paths, queries, and fragments are rejected.
-
-```powershell
-$env:GLACIAL_CORS_ORIGINS = "http://127.0.0.1:5174,http://localhost:5174"
+cd backend
+$env:GLACIAL_DESKTOP_AUTH_TOKEN = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).ToLowerInvariant()
 .\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-The documented default ports remain `8000` for the backend and `5173` for the frontend.
+For macOS/Linux, generate the same ephemeral value with Python:
+
+```bash
+cd backend
+export GLACIAL_DESKTOP_AUTH_TOKEN="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+./.venv/bin/python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+An authenticated debugging client must send that value as an exact `Authorization: Bearer <token>` header. Unset the variable when the session ends. Do not hard-code, print, log, save, or commit it. A missing, empty, or malformed token prevents backend startup.
+
+The backend accepts CORS preflight requests from `http://127.0.0.1:5173`, `http://localhost:5173`, and the Tauri origin by default. Set `GLACIAL_CORS_ORIGINS` to a comma-separated list of explicit HTTP or HTTPS origins only when approved development tooling needs another origin. Wildcards, credentials, paths, queries, and fragments are rejected. CORS is defense in depth and does not replace bearer authentication.
+
+```powershell
+$env:GLACIAL_CORS_ORIGINS = "http://127.0.0.1:5174,http://localhost:5174"
+```
+
+The standalone debugging port remains `8000`; Tauri development uses an ephemeral backend port. Remote and `0.0.0.0` deployment are unsupported.
 
 ## Notes
 

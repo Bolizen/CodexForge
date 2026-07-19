@@ -55,7 +55,13 @@ app.add_middleware(
 
 @app.middleware("http")
 async def require_desktop_authentication(request: Request, call_next):
-    token = desktop_auth_token()
+    try:
+        token = desktop_auth_token()
+    except ValueError:
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Desktop API authentication is unavailable."},
+        )
     if not _authorized_api_request(
         request.url.path,
         request.method,
@@ -87,8 +93,10 @@ def _authorized_api_request(
     authorization: str | None,
     token: str | None,
 ) -> bool:
-    if token is None or method == "OPTIONS" or not path.startswith("/api/"):
+    if method == "OPTIONS" or not path.startswith("/api/"):
         return True
+    if not token:
+        return False
     presented = authorization or ""
     expected = f"Bearer {token}"
     return hmac.compare_digest(presented.encode("utf-8"), expected.encode("ascii"))

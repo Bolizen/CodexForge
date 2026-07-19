@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import io
 import json
 import os
 import tempfile
@@ -10,7 +12,7 @@ from unittest.mock import patch
 
 from app.config import DESKTOP_AUTH_TOKEN_ENV, desktop_auth_token
 from app.database import DB_PATH, REPOSITORY_DB_DIR, resolved_database_path
-from app.desktop_entry import MAX_STARTUP_MESSAGE_BYTES, parse_startup_message, startup_message
+from app.desktop_entry import MAX_STARTUP_MESSAGE_BYTES, parse_startup_message, run, startup_message
 from app.main import _authorized_api_request, app
 
 
@@ -21,15 +23,23 @@ async def asgi_request(
     method: str,
     path: str,
     headers: list[tuple[bytes, bytes]] | None = None,
+    body: dict[str, object] | None = None,
 ) -> tuple[int, dict[str, str], bytes]:
     messages: list[dict[str, object]] = []
     request_sent = False
+    request_body = json.dumps(body).encode("utf-8") if body is not None else b""
+    request_headers = list(headers or [])
+    if body is not None:
+        request_headers.extend([
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(request_body)).encode("ascii")),
+        ])
 
     async def receive() -> dict[str, object]:
         nonlocal request_sent
         if not request_sent:
             request_sent = True
-            return {"type": "http.request", "body": b"", "more_body": False}
+            return {"type": "http.request", "body": request_body, "more_body": False}
         return {"type": "http.disconnect"}
 
     async def send(message: dict[str, object]) -> None:
@@ -46,7 +56,7 @@ async def asgi_request(
             "raw_path": path.encode("ascii"),
             "query_string": b"",
             "root_path": "",
-            "headers": headers or [],
+            "headers": request_headers,
             "client": ("127.0.0.1", 40000),
             "server": ("127.0.0.1", 8000),
         },
@@ -91,10 +101,21 @@ class DesktopDataDirectoryTests(unittest.TestCase):
 
 
 class DesktopAuthenticationTests(unittest.TestCase):
-    def test_authentication_is_disabled_only_when_environment_variable_is_absent(self) -> None:
-        with patch.dict(os.environ, {}, clear=True):
-            self.assertIsNone(desktop_auth_token())
-        self.assertIsNone(desktop_auth_token(None, environment=False))
+    def test_missing_and_empty_token_configuration_fail_closed(self) -> None:
+        for configured in (None, "", "a" * 63, "A" * 64):
+            environment = {} if configured is None else {DESKTOP_AUTH_TOKEN_ENV: configured}
+            with self.subTest(configured=configured):
+                with patch.dict(os.environ, environment, clear=True):
+                    with self.assertRaises(ValueError):
+                        desktop_auth_token()
+                    status, headers, body = asyncio.run(asgi_request("GET", "/api/health"))
+                self.assertEqual(status, 503)
+                self.assertEqual(json.loads(body), {"detail": "Desktop API authentication is unavailable."})
+                self.assertNotIn(TOKEN, json.dumps(headers))
+                self.assertNotIn(TOKEN.encode("ascii"), body)
+
+        self.assertFalse(_authorized_api_request("/api/health", "GET", None, None))
+        self.assertFalse(_authorized_api_request("/api/health", "GET", None, ""))
 
     def test_token_configuration_is_exact(self) -> None:
         self.assertEqual(desktop_auth_token(TOKEN, environment=False), TOKEN)
@@ -111,21 +132,50 @@ class DesktopAuthenticationTests(unittest.TestCase):
 
     def test_missing_malformed_and_incorrect_tokens_return_401(self) -> None:
         with patch.dict(os.environ, {DESKTOP_AUTH_TOKEN_ENV: TOKEN}, clear=False):
-            for authorization in (None, b"Basic abc", f"Bearer {'b' * 64}".encode("ascii")):
+            for authorization in (None, b"", b"Basic abc", f"Bearer {'b' * 64}".encode("ascii")):
                 headers = [] if authorization is None else [(b"authorization", authorization)]
                 status, _, body = asyncio.run(asgi_request("GET", "/api/health", headers))
                 self.assertEqual(status, 401)
                 self.assertEqual(json.loads(body), {"detail": "Desktop API authentication is required."})
+                self.assertNotIn(TOKEN.encode("ascii"), body)
 
-    def test_authentication_disabled_and_enabled_health_requests(self) -> None:
-        with patch.dict(os.environ, {}, clear=True):
-            status, _, body = asyncio.run(asgi_request("GET", "/api/health"))
-            self.assertEqual((status, json.loads(body)), (200, {"status": "ok"}))
+    def test_authenticated_read_succeeds_without_exposing_the_token(self) -> None:
         with patch.dict(os.environ, {DESKTOP_AUTH_TOKEN_ENV: TOKEN}, clear=False):
-            status, _, body = asyncio.run(
+            status, headers, body = asyncio.run(
                 asgi_request("GET", "/api/health", [(b"authorization", f"Bearer {TOKEN}".encode("ascii"))])
             )
             self.assertEqual((status, json.loads(body)), (200, {"status": "ok"}))
+            self.assertNotIn(TOKEN, json.dumps(headers))
+            self.assertNotIn(TOKEN.encode("ascii"), body)
+
+    def test_authenticated_mutation_succeeds(self) -> None:
+        root = Path(tempfile.gettempdir()).resolve()
+        with (
+            patch.dict(os.environ, {DESKTOP_AUTH_TOKEN_ENV: TOKEN}, clear=False),
+            patch("app.main.existing_workspace_root", return_value=root),
+            patch("app.main.set_setting") as set_setting,
+        ):
+            status, _, body = asyncio.run(asgi_request(
+                "PUT",
+                "/api/config/project-root",
+                [(b"authorization", f"Bearer {TOKEN}".encode("ascii"))],
+                {"project_root": str(root)},
+            ))
+        self.assertEqual((status, json.loads(body)), (200, {"project_root": str(root)}))
+        set_setting.assert_called_once_with("project_root", str(root))
+
+    def test_backend_entry_refuses_to_bind_without_token_configuration(self) -> None:
+        errors = io.StringIO()
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch("app.desktop_entry.prepare_database_directory") as prepare_database_directory,
+            patch("app.desktop_entry.socket.socket") as socket_factory,
+            contextlib.redirect_stderr(errors),
+        ):
+            self.assertEqual(run(), 1)
+        prepare_database_directory.assert_not_called()
+        socket_factory.assert_not_called()
+        self.assertEqual(errors.getvalue(), "Glacial backend startup failed.\n")
 
     def test_cors_preflight_remains_available_with_desktop_authentication(self) -> None:
         headers = [
