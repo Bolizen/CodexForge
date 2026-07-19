@@ -2,6 +2,19 @@ from __future__ import annotations
 
 CHANGELOG_ENTRIES = [
     {
+        "version": "0.3.0",
+        "title": "Fail-closed scanning and authenticated development",
+        "changes": [
+            "Repository-policy exclusions remain visible and now make scan coverage incomplete and unverified.",
+            "Malformed, non-object, invalid-UTF-8, and excessively nested package manifests now produce conservative inspection evidence instead of aborting scans.",
+            "Scanner resource budgets now stop safely, preserve findings collected before the stop, and report incomplete coverage.",
+            "Trusted dependency baselines now include opaque VCS selector and resolved-revision identity; schema-1 baselines require explicit recreation or reapproval.",
+            "Missing, empty, or malformed backend authentication now fails closed.",
+            "The supported authenticated full-stack workflow is npm.cmd run tauri:dev; direct browser-to-Uvicorn development is unsupported.",
+            "Added SECURITY.md to define hostile repository inputs, local API authentication, workspace-root assumptions, privilege expectations, and supported deployment boundaries.",
+        ],
+    },
+    {
         "version": "0.11",
         "title": "Scanner report polish",
         "changes": [
