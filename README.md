@@ -2,6 +2,8 @@
 
 Glacial is a local-first safety dashboard for reviewing Codex and AI-generated coding projects before running anything in a development environment.
 
+Glacial by Icefields · [icefields.dev](https://icefields.dev)
+
 It is designed to read project metadata and scan files without executing project code, package scripts, installers, or shell files.
 
 ## Why Glacial Exists
@@ -13,7 +15,7 @@ Glacial is an early stage local-first project focused on project scanning, safet
 
 ## Licensing
 
-Glacial v0.3.0 is licensed under the Functional Source License, Version 1.1, ALv2 Future License (`FSL-1.1-ALv2`). It is Fair Source and source-available, but it is not presently OSI open source.
+Glacial v0.4.0 is licensed under the Functional Source License, Version 1.1, ALv2 Future License (`FSL-1.1-ALv2`). It is Fair Source and source-available, but it is not presently OSI open source.
 
 Internal use, study, modification, and redistribution are permitted subject to the license. Offering Glacial, or substantially similar functionality, to others as a competing commercial product or service is not permitted under the public license. Separate commercial licensing may be available from the copyright holder.
 

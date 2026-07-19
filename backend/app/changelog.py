@@ -2,6 +2,15 @@ from __future__ import annotations
 
 CHANGELOG_ENTRIES = [
     {
+        "version": "0.4.0",
+        "title": "Glacial by Icefields",
+        "changes": [
+            "Adopted the new Glacial application icon across desktop and Windows packaging assets.",
+            "Added restrained Icefields and icefields.dev product branding and package metadata.",
+            "Preserved local-only operation, authenticated desktop behavior, scanner safeguards, and NSIS-only packaging.",
+        ],
+    },
+    {
         "version": "0.3.0",
         "title": "Fail-closed scanning and authenticated development",
         "changes": [

@@ -24,6 +24,7 @@ import {
   stateForWorkspace,
   writeSessionState,
 } from "./sessionState.js";
+import glacialIcon from "../src-tauri/icons/128x128.png";
 import "./styles.css";
 
 const TRANSIENT_NOTICE_MS = 4000;
@@ -958,6 +959,7 @@ export function App() {
     <main className="app-shell">
       <aside className="sidebar">
         <div className="brand-block">
+          <img className="brand-icon" src={glacialIcon} alt="" aria-hidden="true" />
           <div>
             <h1>Glacial</h1>
             <p>Local Project Scanner</p>
@@ -1414,6 +1416,10 @@ function SettingsSection({ projectRoot, selectedProject, onChangeRoot, changing,
         <div>
           <strong>Runtime model</strong>
           <span>Local scanner, local SQLite storage, no cloud sync.</span>
+        </div>
+        <div>
+          <strong>Product</strong>
+          <span>Glacial by Icefields · icefields.dev</span>
         </div>
       </div>
       {editing ? (

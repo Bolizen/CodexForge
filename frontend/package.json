@@ -1,6 +1,8 @@
 {
   "name": "glacial",
-  "version": "0.3.0",
+  "version": "0.4.0",
+  "description": "Glacial by Icefields, a local-first project safety dashboard",
+  "homepage": "https://icefields.dev",
   "private": true,
   "type": "module",
   "scripts": {

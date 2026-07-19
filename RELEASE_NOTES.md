@@ -1,8 +1,15 @@
-# Glacial 0.3.0 Release Candidate
+# Glacial 0.4.0 Branding Release
 
-Glacial 0.3.0 strengthens scan integrity and makes the documented local security boundary fail closed. This release candidate does not add remote deployment support or change Glacial's non-elevated Windows desktop privilege model.
+Glacial 0.4.0 introduces the official Glacial application icon and restrained Icefields product branding. The release preserves the application, security, authentication, scanner, packaging, and release behavior established in 0.3.0.
 
-## Highlights
+## Branding highlights
+
+- Adopted the supplied Glacial artwork as the source for the complete Tauri desktop icon set.
+- Applied the icon to the Windows executable, installed application, Start menu and taskbar surfaces, NSIS installer and uninstaller, and portable executable where supported by Windows and Tauri.
+- Added `Glacial by Icefields` and [icefields.dev](https://icefields.dev) to appropriate UI, package metadata, and project documentation locations.
+- Updated the authoritative application version to 0.4.0.
+
+## Preserved security behavior
 
 - Repository-controlled `.glacialignore` exclusions remain visible, but any excluded file now makes the scan incomplete and unverified rather than allowing a Complete result.
 - Malformed, invalid-UTF-8, non-object, and excessively nested `package.json` inputs now become explicit conservative inspection evidence instead of aborting the scan. Inspection continues for other supported files.
@@ -26,4 +33,4 @@ Glacial 0.3.0 strengthens scan integrity and makes the documented local security
 
 ## Packaging scope
 
-Glacial remains a Windows desktop application with a Tauri-supervised loopback backend. Remote and `0.0.0.0` deployments remain unsupported. The Windows NSIS installer remains English-only.
+Glacial remains a Windows desktop application with a Tauri-supervised loopback backend. Remote and `0.0.0.0` deployments remain unsupported. Windows packaging remains NSIS-only, English-only, with the language selector disabled. The application does not contact `icefields.dev` or any other remote service during normal operation.
