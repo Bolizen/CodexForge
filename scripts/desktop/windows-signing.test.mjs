@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   copyFileSync,
   existsSync,
@@ -32,18 +33,24 @@ import {
   resolveNpmInvocation,
   runCommand,
   sha256,
+  signOne,
   signingEnvironment,
 } from "./windows-signing.mjs";
 import {
+  assertExpectedTauriRestoration,
   assertExactPackageSet,
   assertFileIdentity,
   assertInterpreterIdentity,
+  assertNsisApplicationSource,
   assertSameReleaseSource,
   canonicalizePackageName,
+  copyCapturedApplication,
   normalizeInstalledPackages,
   packageSetDifference,
   parseRequirementsLock,
   publishCandidate,
+  requireApplicationCapture,
+  requireSigningEvents,
   runReleaseSteps,
   verifyPublishedHashes,
 } from "./Build-SignedWindowsRelease.mjs";
@@ -54,6 +61,7 @@ const REPOSITORY = resolve(dirname(TEST_PATH), "..", "..");
 const TEST_ROOT = join(DESKTOP_BUILD_ROOT, "release-signing-tests");
 const FAILED_RC = join(DESKTOP_BUILD_ROOT, "release-candidates", "Glacial-0.4.0-fbf96d568350-20260719T065059Z");
 const THUMBPRINT = "A".repeat(40);
+const RELEASE_ID = "Glacial-0.4.0-ffffffffffff-20260720T120000Z";
 
 function cleanTestRoot() {
   removeSafeTree(DESKTOP_BUILD_ROOT, TEST_ROOT, { pathInspector: false });
@@ -349,6 +357,91 @@ test("private-key probe signs, verifies, derives trust, and removes its disposab
   assert.equal(identity.trustClassification, "self-signed");
   assert.deepEqual(calls, ["sign", "timestamp", "verify"]);
   assert.deepEqual(readdirSync(probeParent), []);
+});
+
+test("signed application capture survives Tauri restoration and is the only portable application input", () => {
+  const workingApplication = join(TEST_ROOT, "tauri", "target", "release", "glacial.exe");
+  const capture = join(TEST_ROOT, "signing", "application", "Glacial.exe");
+  const auditLog = join(TEST_ROOT, "signing", "signing-events.jsonl");
+  const portableApplication = join(TEST_ROOT, "portable", "Glacial.exe");
+  const nsisScript = join(TEST_ROOT, "tauri", "target", "release", "nsis", "x64", "installer.nsi");
+  const failedEvidence = join(TEST_ROOT, "failed-build-evidence.exe");
+  mkdirSync(dirname(workingApplication), { recursive: true });
+  mkdirSync(dirname(portableApplication), { recursive: true });
+  mkdirSync(dirname(nsisScript), { recursive: true });
+  const original = minimalPe();
+  writeFileSync(workingApplication, original);
+  writeFileSync(failedEvidence, "preserve failed build");
+  writeFileSync(nsisScript, `!define MAINBINARYSRCPATH "${workingApplication}"\r\nFile "\${MAINBINARYSRCPATH}"\r\n`);
+  const config = {
+    ...loadSigningConfig(storeEnvironment({ GLACIAL_WINDOWS_RELEASE_ID: RELEASE_ID }), { dryRun: true }),
+    applicationTarget: workingApplication,
+    applicationCapture: capture,
+    auditLog,
+  };
+  const signature = { Status: "Valid", StatusMessage: "Signature verified.", SignerThumbprint: THUMBPRINT, CanonicalSubject: "CN=ICEFIELDS DEVELOPMENT", TimestampThumbprint: "B".repeat(40), TrustValid: true, TrustClassification: "self-signed", ChainStatuses: [] };
+  const runner = (command, args, options = {}) => {
+    const operation = options.env?.GLACIAL_WINDOWS_HELPER_OPERATION;
+    if (operation === "canonical-subject") return { status: 0, stdout: '{"CanonicalSubject":"CN=ICEFIELDS DEVELOPMENT"}', stderr: "" };
+    if (operation === "signature") return { status: 0, stdout: JSON.stringify(signature), stderr: "" };
+    if (args[0] === "sign") { writeFileSync(args.at(-1), Buffer.concat([readFileSync(args.at(-1)), Buffer.from("signed")])) ; return { status: 0, stdout: "", stderr: "" }; }
+    if (["timestamp", "verify"].includes(args[0])) return { status: 0, stdout: "", stderr: "" };
+    throw new Error(`Unexpected signing command: ${command}`);
+  };
+
+  signOne(workingApplication, config, { runner, pathInspector: false });
+  const capturedBytes = readFileSync(capture);
+  const [applicationEvent] = readFileSync(auditLog, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
+  assert.notDeepEqual(capturedBytes, original);
+  assert.equal(applicationEvent.beforeSha256, createHash("sha256").update(original).digest("hex").toUpperCase());
+  assert.equal(applicationEvent.sha256, sha256(capture));
+  assert.equal(applicationEvent.applicationCapturePath, capture);
+
+  writeFileSync(workingApplication, original);
+  assert.equal(assertExpectedTauriRestoration(workingApplication, capture, { signature: { status: "NotSigned" } }).status, "NotSigned");
+  assert.equal(assertNsisApplicationSource(nsisScript, workingApplication), workingApplication);
+  copyCapturedApplication(capture, portableApplication, config);
+  assert.deepEqual(readFileSync(portableApplication), capturedBytes);
+  assert.throws(() => copyCapturedApplication(workingApplication, join(TEST_ROOT, "portable", "wrong.exe"), config), /preserved signed/);
+  assert.throws(() => signOne(workingApplication, config, { runner, pathInspector: false }), /duplicate/);
+  assert.equal(readFileSync(failedEvidence, "utf8"), "preserve failed build");
+
+  const unrelated = join(TEST_ROOT, "unrelated.exe");
+  writeFileSync(unrelated, minimalPe());
+  signOne(unrelated, config, { runner, pathInspector: false });
+  assert.deepEqual(readFileSync(capture), capturedBytes);
+  const events = readFileSync(auditLog, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
+  assert.equal(events[1].applicationCapturePath, null);
+});
+
+test("application capture validation rejects missing, duplicate, unrelated, and hash-mismatched events", () => {
+  const capture = join(TEST_ROOT, "capture", "Glacial.exe");
+  const target = join(TEST_ROOT, "target", "glacial.exe");
+  mkdirSync(dirname(capture), { recursive: true });
+  writeFileSync(capture, minimalPe());
+  const config = { expectedThumbprint: THUMBPRINT, applicationTarget: target, applicationCapture: capture };
+  const event = { path: target, beforeSha256: "C".repeat(64), sha256: sha256(capture), applicationCapturePath: capture, signerThumbprint: THUMBPRINT, canonicalSubject: "CN=ICEFIELDS DEVELOPMENT", timestampThumbprint: "B".repeat(40) };
+  assert.equal(requireApplicationCapture([event], config, "CN=ICEFIELDS DEVELOPMENT"), event);
+  assert.throws(() => requireApplicationCapture([], config, "CN=ICEFIELDS DEVELOPMENT"), /exactly one/);
+  assert.throws(() => requireApplicationCapture([event, event], config, "CN=ICEFIELDS DEVELOPMENT"), /exactly one/);
+  assert.throws(() => requireApplicationCapture([{ ...event, path: join(TEST_ROOT, "other.exe") }], config, "CN=ICEFIELDS DEVELOPMENT"), /unrelated/);
+  assert.throws(() => requireApplicationCapture([{ ...event, sha256: "D".repeat(64) }], config, "CN=ICEFIELDS DEVELOPMENT"), /hash/);
+});
+
+test("Tauri signing evidence requires one transient uninstaller between plugins and final installer", () => {
+  const capture = join(TEST_ROOT, "capture-evidence", "Glacial.exe");
+  const target = join(TEST_ROOT, "target-evidence", "glacial.exe");
+  const installer = join(TEST_ROOT, "bundle", "Glacial_0.4.0_x64-setup.exe");
+  mkdirSync(dirname(capture), { recursive: true });
+  writeFileSync(capture, minimalPe());
+  const config = { expectedThumbprint: THUMBPRINT, applicationTarget: target, applicationCapture: capture };
+  const identity = { beforeSha256: "C".repeat(64), signerThumbprint: THUMBPRINT, canonicalSubject: "CN=ICEFIELDS DEVELOPMENT", timestampThumbprint: "B".repeat(40), applicationCapturePath: null };
+  const application = { ...identity, path: target, sha256: sha256(capture), applicationCapturePath: capture };
+  const plugins = ["NSISdl.dll", "StartMenu.dll", "System.dll", "nsDialogs.dll", "nsis_tauri_utils.dll"].map((name) => ({ ...identity, path: join(TEST_ROOT, "plugins", name), sha256: "D".repeat(64) }));
+  const uninstaller = { ...identity, path: "C:\\Users\\Test\\AppData\\Local\\Temp\\nst1234.tmp", sha256: "E".repeat(64) };
+  const installerEvent = { ...identity, path: installer, sha256: "F".repeat(64) };
+  assert.equal(requireSigningEvents([application, ...plugins, uninstaller, installerEvent], config, installer, "CN=ICEFIELDS DEVELOPMENT").uninstallerEvent, uninstaller);
+  assert.throws(() => requireSigningEvents([application, ...plugins, installerEvent], config, installer, "CN=ICEFIELDS DEVELOPMENT"), /transient NSIS uninstaller/);
 });
 
 test("release source revalidation rejects every mutable provenance field", () => {

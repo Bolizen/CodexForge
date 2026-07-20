@@ -19,6 +19,7 @@ import {
   assertSafePath,
   createTauriSigningOverlay,
   ensureSafeDirectory,
+  inspectAuthenticode,
   loadSigningConfig,
   minimalEnvironment,
   preflightSigningProvider,
@@ -44,7 +45,7 @@ const TAURI_TARGET = join(FRONTEND, "src-tauri", "target", "release");
 const PORTABLE_ROOT = join(DESKTOP_BUILD_ROOT, "portable", "Glacial");
 const RELEASE_CANDIDATES = join(DESKTOP_BUILD_ROOT, "release-candidates");
 const RELEASE_WORK = join(DESKTOP_BUILD_ROOT, "release-work");
-const EXPECTED_NSIS_COMPONENTS = ["NSISdl.dll", "StartMenu.dll", "System.dll", "nsDialogs.dll", "nsis_tauri_utils.dll", "uninstall.exe"];
+const EXPECTED_NSIS_COMPONENTS = ["NSISdl.dll", "StartMenu.dll", "System.dll", "nsDialogs.dll", "nsis_tauri_utils.dll"];
 
 function redact(text, secretValues = []) {
   let value = String(text ?? "");
@@ -224,15 +225,60 @@ function parseAuditLog(path) {
   return readFileSync(path, "utf8").split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
 }
 
-function requireSigningEvents(events, config, installer, application) {
-  const expectedNames = [...EXPECTED_NSIS_COMPONENTS, basename(installer), basename(application)].map((name) => name.toLowerCase());
+function requireSigningEventIdentity(event, config, expectedCanonicalSubject, label) {
+  if (event.signerThumbprint !== config.expectedThumbprint || !event.timestampThumbprint) throw new Error(`Invalid signing event identity for ${label}.`);
+  if (String(event.canonicalSubject ?? "").toUpperCase() !== expectedCanonicalSubject) throw new Error(`Invalid signing event subject for ${label}.`);
+}
+
+export function requireApplicationCapture(events, config, expectedCanonicalSubject) {
+  const captures = events.filter((event) => event.applicationCapturePath);
+  if (captures.length !== 1) throw new Error(`Expected exactly one Glacial application capture; found ${captures.length}.`);
+  const event = captures[0];
+  if (resolve(event.path).toLowerCase() !== resolve(config.applicationTarget).toLowerCase()) throw new Error("An unrelated executable was recorded as the Glacial application capture.");
+  if (resolve(event.applicationCapturePath).toLowerCase() !== resolve(config.applicationCapture).toLowerCase()) throw new Error("The Glacial application capture path is unexpected.");
+  if (!existsSync(config.applicationCapture) || event.sha256 !== sha256(config.applicationCapture)) throw new Error("The Glacial application capture hash does not match its signing event.");
+  if (!/^[0-9A-F]{64}$/.test(String(event.beforeSha256 ?? ""))) throw new Error("The Glacial application signing event is missing its pre-signing hash.");
+  requireSigningEventIdentity(event, config, expectedCanonicalSubject, "Glacial.exe");
+  return event;
+}
+
+export function assertExpectedTauriRestoration(workingApplication, capturedApplication, options = {}) {
+  if (!existsSync(workingApplication) || !existsSync(capturedApplication)) throw new Error("The Tauri application lifecycle evidence is incomplete.");
+  if (sha256(workingApplication) === sha256(capturedApplication)) throw new Error("Tauri did not restore the expected unsigned working application.");
+  const signature = options.signature ?? inspectAuthenticode(workingApplication, options.runner, options.env);
+  if (signature.status !== "NotSigned") throw new Error("The restored Tauri working application has an unexpected signature state.");
+  return { path: resolve(workingApplication), sha256: sha256(workingApplication), status: signature.status };
+}
+
+export function assertNsisApplicationSource(nsisScript, expectedApplication) {
+  const content = readFileSync(nsisScript, "utf8");
+  const matches = [...content.matchAll(/^!define MAINBINARYSRCPATH "([^"]+)"\r?$/gm)];
+  if (matches.length !== 1) throw new Error(`Expected exactly one NSIS main application source; found ${matches.length}.`);
+  const fileDirectives = [...content.matchAll(/^[ \t]*File[ \t]+"\$\{MAINBINARYSRCPATH\}"[ \t]*\r?$/gm)];
+  if (fileDirectives.length !== 1) throw new Error(`Expected exactly one NSIS main application File directive; found ${fileDirectives.length}.`);
+  const source = resolve(matches[0][1]);
+  if (source.toLowerCase() !== resolve(expectedApplication).toLowerCase()) throw new Error("The NSIS installer references an unexpected application source.");
+  return source;
+}
+
+export function requireSigningEvents(events, config, installer, expectedCanonicalSubject) {
+  const expectedNames = [...EXPECTED_NSIS_COMPONENTS, basename(installer)].map((name) => name.toLowerCase());
   for (const expected of expectedNames) {
     const matches = events.filter((event) => basename(event.path).toLowerCase() === expected);
     if (matches.length !== 1) throw new Error(`Expected exactly one signing event for ${expected}; found ${matches.length}.`);
-    if (matches[0].signerThumbprint !== config.expectedThumbprint || !matches[0].timestampThumbprint) throw new Error(`Invalid signing event identity for ${expected}.`);
+    requireSigningEventIdentity(matches[0], config, expectedCanonicalSubject, expected);
   }
-  const applicationEvent = events.find((event) => resolve(event.path).toLowerCase() === resolve(application).toLowerCase());
-  if (!applicationEvent || applicationEvent.sha256 !== sha256(application)) throw new Error("The recorded Glacial.exe signing event does not match the packaged application bytes.");
+  const applicationEvent = requireApplicationCapture(events, config, expectedCanonicalSubject);
+  const applicationIndex = events.indexOf(applicationEvent);
+  const installerEvent = events.find((event) => resolve(event.path).toLowerCase() === resolve(installer).toLowerCase());
+  if (!installerEvent) throw new Error("The final installer signing event path is unexpected.");
+  const installerIndex = events.indexOf(installerEvent);
+  if (applicationIndex < 0 || installerIndex <= applicationIndex) throw new Error("The Tauri application and installer signing event order is unexpected.");
+  const pluginNames = new Set(EXPECTED_NSIS_COMPONENTS.map((name) => name.toLowerCase()));
+  const transient = events.slice(applicationIndex + 1, installerIndex).filter((event) => !pluginNames.has(basename(event.path).toLowerCase()));
+  if (transient.length !== 1 || !basename(transient[0].path).toLowerCase().endsWith(".tmp") || transient[0].applicationCapturePath) throw new Error("Expected exactly one transient NSIS uninstaller signing event.");
+  requireSigningEventIdentity(transient[0], config, expectedCanonicalSubject, "NSIS uninstaller");
+  return { applicationEvent, uninstallerEvent: transient[0] };
 }
 
 function findInstaller(version) {
@@ -250,8 +296,15 @@ export function assertFileIdentity(left, right, label = "file") {
   return true;
 }
 
-function assemblePortable(config, expectedCanonicalSubject) {
-  const application = join(TAURI_TARGET, "glacial.exe");
+export function copyCapturedApplication(application, destination, config) {
+  if (resolve(application).toLowerCase() !== resolve(config.applicationCapture).toLowerCase()) throw new Error("Portable assembly requires the preserved signed Glacial application capture.");
+  const output = assertSafePath(DESKTOP_BUILD_ROOT, destination);
+  copyFileSync(application, output, constants.COPYFILE_EXCL);
+  assertFileIdentity(application, output, "captured Glacial.exe portable input");
+  return output;
+}
+
+function assemblePortable(application, config, expectedCanonicalSubject) {
   const stagedBackend = join(SIDECAR_STAGE, "glacial-backend-x86_64-pc-windows-msvc.exe");
   const stagedInternal = join(SIDECAR_STAGE, "_internal");
   for (const required of [application, stagedBackend, stagedInternal]) if (!existsSync(required)) throw new Error(`Signed portable input is missing: ${required}`);
@@ -260,7 +313,7 @@ function assemblePortable(config, expectedCanonicalSubject) {
   removeSafeTree(DESKTOP_BUILD_ROOT, PORTABLE_ROOT);
   ensureSafeDirectory(DESKTOP_BUILD_ROOT, PORTABLE_ROOT);
   const portableApplication = join(PORTABLE_ROOT, "Glacial.exe");
-  copyFileSync(application, portableApplication);
+  copyCapturedApplication(application, portableApplication, config);
   copyFileSync(stagedBackend, join(PORTABLE_ROOT, "glacial-backend.exe"));
   cpSync(stagedInternal, join(PORTABLE_ROOT, "_internal"), { recursive: true, errorOnExist: true });
   assertFileIdentity(application, portableApplication, "Glacial.exe installer/portable input");
@@ -328,7 +381,7 @@ function artifactRecord(kind, path, root) {
   return { kind, filename: basename(path), path: relative(root, path).replaceAll("\\", "/"), bytes: statSync(path).size, sha256: sha256(path) };
 }
 
-function writeReleaseMetadata({ workRoot, source, signerIdentity, installer, portableZip, portablePeRecords, backendSigningRecords, signingEvents, payloadAudit, buildStartedUtc, applicationSha256 }) {
+function writeReleaseMetadata({ workRoot, source, signerIdentity, installer, portableZip, portablePeRecords, backendSigningRecords, signingEvents, payloadAudit, buildStartedUtc, applicationSha256, installerApplicationEvidence }) {
   const artifacts = [artifactRecord("nsis-installer", installer, workRoot), artifactRecord("portable-zip", portableZip, workRoot)];
   const manifest = {
     schema: "glacial-release-candidate/v1",
@@ -348,8 +401,9 @@ function writeReleaseMetadata({ workRoot, source, signerIdentity, installer, por
       trust: signerIdentity.trustClassification === "publicly-trusted" ? "publicly trusted" : "self-signed",
       timestampRequired: true,
       applicationSha256,
+      installerApplicationEvidence,
       backend: backendSigningRecords.map((record) => ({ path: record.relativePath, classification: record.classification, beforeSha256: record.beforeSha256, afterSha256: record.afterSha256, signerThumbprint: record.signature.signerThumbprint })),
-      events: signingEvents.map(({ path, ...event }) => ({ file: basename(path), ...event })),
+      events: signingEvents.map(({ path, applicationCapturePath, ...event }) => ({ file: basename(path), applicationCapture: applicationCapturePath ? relative(DESKTOP_BUILD_ROOT, applicationCapturePath).replaceAll("\\", "/") : null, ...event })),
       portablePeFiles: portablePeRecords,
     },
     payloadAudit,
@@ -404,7 +458,7 @@ function formatTimestamp(date) {
 
 function dryRun() {
   const config = loadSigningConfig(process.env, { dryRun: true });
-  process.stdout.write(`${JSON.stringify({ mode: "dry-run", repository: REPOSITORY, provider: config.provider, expectedSubject: config.expectedSubject, expectedThumbprint: config.expectedThumbprint, timestampOrigin: new URL(config.timestampUrl).origin, tauriOverlay: createTauriSigningOverlay(), actualSteps: ["verify-source", "preflight-disposable-signature", "build-backend", "sign-backend", "stage-backend", "clean-generated-tauri-release-output", "tauri-build-and-sign-once", "verify-installer-and-application", "assemble-portable-from-identical-bytes", "verify-zip", "write-final-hashes", "revalidate-source", "atomic-publish"] }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ mode: "dry-run", repository: REPOSITORY, provider: config.provider, expectedSubject: config.expectedSubject, expectedThumbprint: config.expectedThumbprint, timestampOrigin: new URL(config.timestampUrl).origin, tauriOverlay: createTauriSigningOverlay(), actualSteps: ["verify-source", "preflight-disposable-signature", "build-backend", "sign-backend", "stage-backend", "clean-generated-tauri-release-output", "tauri-build-and-sign-once", "verify-installer-captured-application-and-restoration", "assemble-portable-from-captured-identical-bytes", "verify-zip", "write-final-hashes", "revalidate-source", "atomic-publish"] }, null, 2)}\n`);
 }
 
 async function buildSignedRelease() {
@@ -441,14 +495,20 @@ async function buildSignedRelease() {
     { name: "tauri-build", run: () => runVisible(npm.command, [...npm.prefixArgs, "run", "tauri:build", "--", "--config", overlayPath], { cwd: FRONTEND, env: releaseEnvironment, secretValues }) },
     { name: "verify-tauri-output", run: () => {
       state.installer = findInstaller(source.version);
-      state.application = join(TAURI_TARGET, "glacial.exe");
+      state.workingApplication = join(TAURI_TARGET, "glacial.exe");
+      state.application = config.applicationCapture;
+      for (const path of [state.workingApplication, state.application]) if (!existsSync(path)) throw new Error(`Tauri application lifecycle evidence is missing: ${path}`);
       verifySignature(state.installer, config, { expectFirstParty: true, expectedCanonicalSubject: signerIdentity.expectedCanonicalSubject });
       verifySignature(state.application, config, { expectFirstParty: true, expectedCanonicalSubject: signerIdentity.expectedCanonicalSubject });
+      const restored = assertExpectedTauriRestoration(state.workingApplication, state.application);
       state.applicationSha256 = sha256(state.application);
       state.signingEvents = parseAuditLog(config.auditLog);
-      requireSigningEvents(state.signingEvents, config, state.installer, state.application);
+      const signingEvidence = requireSigningEvents(state.signingEvents, config, state.installer, signerIdentity.expectedCanonicalSubject);
+      const nsisScript = join(TAURI_TARGET, "nsis", "x64", "installer.nsi");
+      const nsisSource = assertNsisApplicationSource(nsisScript, state.workingApplication);
+      state.installerApplicationEvidence = { method: "tauri-v2.11.4-static-nsis-source", nsisScript: relative(REPOSITORY, nsisScript).replaceAll("\\", "/"), nsisSource: relative(REPOSITORY, nsisSource).replaceAll("\\", "/"), signedCaptureSha256: state.applicationSha256, signingEventSha256: signingEvidence.applicationEvent.sha256, restoredWorkingSha256: restored.sha256 };
     } },
-    { name: "assemble-portable", run: () => { state.portablePeRecords = assemblePortable(config, signerIdentity.expectedCanonicalSubject); state.payloadAudit = auditPortablePayload(PORTABLE_ROOT); } },
+    { name: "assemble-portable", run: () => { state.portablePeRecords = assemblePortable(state.application, config, signerIdentity.expectedCanonicalSubject); state.payloadAudit = auditPortablePayload(PORTABLE_ROOT); } },
     { name: "copy-and-package", run: () => {
       state.installerDestination = join(workRoot, "artifacts", basename(state.installer));
       copyFileSync(state.installer, state.installerDestination, constants.COPYFILE_EXCL);
@@ -457,7 +517,7 @@ async function buildSignedRelease() {
       createPortableZip(tarPath, PORTABLE_ROOT, state.portableZip);
       verifyPortableArchive(tarPath, state.portableZip, PORTABLE_ROOT, join(workRoot, "zip-verification"), config, signerIdentity.expectedCanonicalSubject);
     } },
-    { name: "write-metadata", run: () => { state.metadata = writeReleaseMetadata({ workRoot, source, signerIdentity, installer: state.installerDestination, portableZip: state.portableZip, portablePeRecords: state.portablePeRecords, backendSigningRecords: state.backendSigningRecords, signingEvents: state.signingEvents, payloadAudit: state.payloadAudit, buildStartedUtc, applicationSha256: state.applicationSha256 }); } },
+    { name: "write-metadata", run: () => { state.metadata = writeReleaseMetadata({ workRoot, source, signerIdentity, installer: state.installerDestination, portableZip: state.portableZip, portablePeRecords: state.portablePeRecords, backendSigningRecords: state.backendSigningRecords, signingEvents: state.signingEvents, payloadAudit: state.payloadAudit, buildStartedUtc, applicationSha256: state.applicationSha256, installerApplicationEvidence: state.installerApplicationEvidence }); } },
     { name: "publish", run: () => publishCandidate({ workRoot, finalRoot, sourceBefore: source, integrityVerifier: () => verifyPublishedHashes(workRoot, state.metadata.manifestPath, state.metadata.sumsPath), sourceVerifier: () => verifyReleaseSource(gitPath) }) },
   ], state);
 

@@ -1,4 +1,5 @@
 import {
+  constants,
   appendFileSync,
   copyFileSync,
   existsSync,
@@ -7,8 +8,10 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
@@ -257,10 +260,13 @@ export function loadSigningConfig(env = process.env, options = {}) {
   const timestampUrl = parseTimestampUrl(env.GLACIAL_WINDOWS_TIMESTAMP_URL);
   const releaseId = validateReleaseId(env.GLACIAL_WINDOWS_RELEASE_ID);
   const auditLog = releaseId ? resolve(DESKTOP_BUILD_ROOT, "signing", releaseId, "signing-events.jsonl") : null;
+  const applicationTarget = releaseId ? resolve(REPOSITORY_ROOT, "frontend", "src-tauri", "target", "release", "glacial.exe") : null;
+  const applicationCapture = releaseId ? resolve(DESKTOP_BUILD_ROOT, "signing", releaseId, "application", "Glacial.exe") : null;
+  const releaseState = { releaseId, auditLog, applicationTarget, applicationCapture };
 
   if (provider === "store") {
     const thumbprint = normalizeThumbprint(env.GLACIAL_WINDOWS_CERTIFICATE_THUMBPRINT);
-    return { provider, expectedSubject, expectedThumbprint: thumbprint, certificateThumbprint: thumbprint, signToolPath, timestampUrl, requireTimestamp: true, releaseId, auditLog };
+    return { provider, expectedSubject, expectedThumbprint: thumbprint, certificateThumbprint: thumbprint, signToolPath, timestampUrl, requireTimestamp: true, ...releaseState };
   }
   const command = requireAbsoluteFile(env.GLACIAL_WINDOWS_SIGN_COMMAND, "GLACIAL_WINDOWS_SIGN_COMMAND", dryRun);
   const providerEnvironmentNames = parseEnvironmentNames(env.GLACIAL_WINDOWS_SIGN_COMMAND_ENV);
@@ -276,8 +282,7 @@ export function loadSigningConfig(env = process.env, options = {}) {
     commandArgs: parseCommandArguments(env.GLACIAL_WINDOWS_SIGN_COMMAND_ARGS),
     providerEnvironmentNames,
     providerEnvironment,
-    releaseId,
-    auditLog,
+    ...releaseState,
   };
 }
 
@@ -567,9 +572,39 @@ function appendAuditRecord(config, record) {
   appendFileSync(audit, `${JSON.stringify(record)}\n`, { encoding: "utf8" });
 }
 
+function samePath(left, right) {
+  return Boolean(left && right) && resolve(left).toLowerCase() === resolve(right).toLowerCase();
+}
+
+export function captureSignedApplication(file, config, options = {}) {
+  const target = resolve(file);
+  if (!samePath(target, config.applicationTarget)) return null;
+  if (!config.applicationCapture) throw new Error("The application capture path is unavailable.");
+  const capture = assertSafePath(DESKTOP_BUILD_ROOT, config.applicationCapture, options);
+  const captureRoot = ensureSafeDirectory(DESKTOP_BUILD_ROOT, dirname(capture), options);
+  assertSafeTree(captureRoot, options);
+  if (existsSync(capture)) throw new Error("Refusing a duplicate Glacial application capture.");
+
+  const temporary = assertSafePath(captureRoot, resolve(captureRoot, `Glacial.exe.capture-${process.pid}-${Date.now()}.tmp`), options);
+  try {
+    copyFileSync(target, temporary, constants.COPYFILE_EXCL);
+    const targetHash = sha256(target);
+    if (sha256(temporary) !== targetHash) throw new Error("The temporary Glacial application capture is not byte-identical.");
+    const signature = verifySignature(temporary, config, { expectFirstParty: true, runner: options.runner, env: options.env });
+    renameSync(temporary, capture);
+    if (sha256(capture) !== targetHash) throw new Error("The atomic Glacial application capture hash changed.");
+    const capturedSignature = verifySignature(capture, config, { expectFirstParty: true, runner: options.runner, env: options.env });
+    return { path: capture, sha256: targetHash, signature: capturedSignature };
+  } finally {
+    if (existsSync(temporary)) unlinkSync(temporary);
+  }
+}
+
 export function signOne(file, config, options = {}) {
   const target = resolve(file);
   if (!isPortableExecutable(readFileSync(target))) throw new Error(`Refusing to Authenticode-sign a non-PE file: ${basename(target)}`);
+  if (samePath(target, config.applicationTarget) && config.applicationCapture && existsSync(config.applicationCapture)) throw new Error("Refusing a duplicate Glacial application capture.");
+  const beforeSha256 = sha256(target);
   const runner = options.runner ?? runCommand;
   if (config.provider === "store") {
     const commandOptions = { env: minimalEnvironment(process.env), timeoutMs: 120_000, includeFailureOutput: true };
@@ -579,7 +614,10 @@ export function signOne(file, config, options = {}) {
     runner(config.command, buildCommandSignArgs(config, target), { env: config.providerEnvironment, timeoutMs: 120_000 });
   }
   const signature = verifySignature(target, config, { expectFirstParty: true, runner, env: options.env });
-  appendAuditRecord(config, { path: target, sha256: sha256(target), signerThumbprint: signature.signerThumbprint, canonicalSubject: signature.canonicalSubject, timestampThumbprint: signature.timestampThumbprint, trustClassification: signature.trustClassification, signedUtc: new Date().toISOString() });
+  const signedSha256 = sha256(target);
+  const applicationCapture = captureSignedApplication(target, config, { ...options, runner });
+  if (applicationCapture && applicationCapture.sha256 !== signedSha256) throw new Error("The Glacial application capture does not match the signed bytes.");
+  appendAuditRecord(config, { path: target, beforeSha256, sha256: signedSha256, applicationCapturePath: applicationCapture?.path ?? null, signerThumbprint: signature.signerThumbprint, canonicalSubject: signature.canonicalSubject, timestampThumbprint: signature.timestampThumbprint, trustClassification: signature.trustClassification, signedUtc: new Date().toISOString() });
   return signature;
 }
 

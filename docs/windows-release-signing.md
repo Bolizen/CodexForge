@@ -32,7 +32,7 @@ npm.cmd --prefix frontend run release:windows:signed
 
 `command` mode invokes one absolute reviewed executable directly, without a shell. Its JSON argument array contains exactly one `{file}` placeholder. Only explicitly named provider environment variables are forwarded. Credentials must not appear in command arguments, paths, logs, manifests, or tracked files. Prefer managed identity or an HSM/provider session over long-lived environment secrets.
 
-Tauri receives an ignored generated overlay whose object-form `signCommand` calls the same wrapper. Glacial.exe is signed once by Tauri, verified, and reused byte-for-byte for portable packaging. Existing valid vendor-signed files are hashed before and after verification and are never re-signed.
+Tauri receives an ignored generated overlay whose object-form `signCommand` calls the same wrapper. Tauri patches and signs Glacial.exe for each bundle type, then restores its unsigned working executable after bundling. The wrapper atomically preserves the one verified NSIS application signing result in the confined release signing state; that exact capture is verified against the signing audit and NSIS staging evidence, then reused byte-for-byte for portable packaging. Glacial.exe is never signed a second time after Tauri finishes. Existing valid vendor-signed files are hashed before and after verification and are never re-signed.
 
 ## Repeat-safe self-signed provisioning
 
@@ -213,8 +213,8 @@ The coordinator performs this order:
 1. Verify repository identity, branch, clean status, `HEAD == origin/main`, and v0.4.0 metadata.
 2. Select one exact CurrentUser certificate or external signer and sign/verify a disposable timestamped PE probe.
 3. Verify build/runtime environments, build the backend once, preserve valid vendor bytes, and sign every unsigned PE.
-4. Stage the signed backend and let Tauri sign Glacial.exe, supported NSIS components, uninstaller, and final installer.
-5. Verify Tauri's signed outputs and reuse the exact Glacial.exe bytes for portable assembly.
+4. Stage the signed backend and let Tauri sign Glacial.exe, supported NSIS components, uninstaller, and final installer; the custom signer atomically captures the one verified NSIS-patched Glacial.exe before Tauri restores its working file.
+5. Verify the final installer, captured application, exact signing audit event, restored working-file state, and generated NSIS main-binary source; reuse only the captured signed Glacial.exe bytes for portable assembly.
 6. Create and re-extract the portable ZIP; compare every source/archive file and reverify every PE.
 7. Generate final manifest and hashes only after all binary mutation is complete.
 8. Recheck branch, HEAD, origin/main, clean status, and release metadata.
