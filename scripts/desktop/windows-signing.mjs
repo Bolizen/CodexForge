@@ -9,6 +9,7 @@ import {
   realpathSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
@@ -146,9 +147,18 @@ export function minimalEnvironment(source = process.env, extras = {}, allowedNam
   return result;
 }
 
-function commandFailure(command, result) {
+function sanitizedFailureOutput(result, redactions = []) {
+  let output = [result.stdout, result.stderr].filter(Boolean).join("\n");
+  for (const value of redactions.filter((item) => typeof item === "string" && item.length > 0)) output = output.replaceAll(value, "[REDACTED]");
+  output = output.replaceAll(/\u001B\[[0-?]*[ -/]*[@-~]/g, "").replaceAll(/[^\t\r\n\x20-\x7E]/g, "").trim();
+  if (output.length > 16_384) output = `${output.slice(0, 16_384)}\n[diagnostic output truncated]`;
+  return output;
+}
+
+function commandFailure(command, result, options = {}) {
   const reason = result.signal ? `signal ${result.signal}` : `status ${result.status ?? "unknown"}`;
-  return new Error(`${basename(command)} failed with ${reason}; child output was suppressed.`);
+  const diagnostic = options.includeFailureOutput ? sanitizedFailureOutput(result, options.diagnosticRedactions) : "";
+  return new Error(diagnostic ? `${basename(command)} failed with ${reason}.\n${diagnostic}` : `${basename(command)} failed with ${reason}; child output was suppressed.`);
 }
 
 export function runCommand(command, args, options = {}) {
@@ -163,7 +173,7 @@ export function runCommand(command, args, options = {}) {
     shell: false,
   });
   if (result.error) throw new Error(`${basename(command)} could not be started: ${result.error.code ?? "unknown error"}.`);
-  if (result.status !== 0) throw commandFailure(command, result);
+  if (result.status !== 0) throw commandFailure(command, result, options);
   return result;
 }
 
@@ -177,11 +187,14 @@ function parseTimestampUrl(value) {
   if (!value) throw new Error("GLACIAL_WINDOWS_TIMESTAMP_URL is required for signed releases.");
   let parsed;
   try { parsed = new URL(value); } catch { throw new Error("GLACIAL_WINDOWS_TIMESTAMP_URL is invalid."); }
-  if (parsed.protocol !== "https:") throw new Error("GLACIAL_WINDOWS_TIMESTAMP_URL must use HTTPS.");
   if (parsed.username || parsed.password || parsed.search || parsed.hash) {
     throw new Error("GLACIAL_WINDOWS_TIMESTAMP_URL must not contain credentials, a query string, or a fragment.");
   }
-  return parsed.toString();
+  const exactDigiCertHttpEndpoint = parsed.protocol === "http:" && parsed.hostname.toLowerCase() === "timestamp.digicert.com" && !parsed.port && parsed.pathname === "/";
+  if (parsed.protocol !== "https:" && !exactDigiCertHttpEndpoint) {
+    throw new Error("GLACIAL_WINDOWS_TIMESTAMP_URL must use HTTPS or the exact DigiCert HTTP RFC 3161 endpoint.");
+  }
+  return exactDigiCertHttpEndpoint ? "http://timestamp.digicert.com" : parsed.toString();
 }
 
 function parseCommandArguments(value) {
@@ -437,7 +450,11 @@ export function sha256(path) {
 }
 
 export function buildStoreSignArgs(config, file) {
-  return ["sign", "/fd", "SHA256", "/sha1", config.certificateThumbprint, "/d", "Glacial", "/tr", config.timestampUrl, "/td", "SHA256", resolve(file)];
+  return ["sign", "/debug", "/v", "/s", "My", "/sha1", config.certificateThumbprint, "/fd", "SHA256", "/d", "Glacial", resolve(file)];
+}
+
+export function buildTimestampArgs(config, file) {
+  return ["timestamp", "/debug", "/v", "/tr", config.timestampUrl, "/td", "SHA256", resolve(file)];
 }
 
 export function buildCommandSignArgs(config, file) {
@@ -464,6 +481,33 @@ export function hasEmbeddedAuthenticode(buffer) {
   const dataDirectory = optionalHeader + (magic === 0x20b ? 112 : magic === 0x10b ? 96 : -1);
   const securityDirectory = dataDirectory + 32;
   return dataDirectory >= optionalHeader && securityDirectory + 8 <= buffer.length && buffer.readUInt32LE(securityDirectory) !== 0 && buffer.readUInt32LE(securityDirectory + 4) !== 0;
+}
+
+export function createUnsignedProbeCopy(source, destination) {
+  copyFileSync(source, destination);
+  const original = readFileSync(destination);
+  if (!isPortableExecutable(original)) throw new Error("The signing probe source is not a PE file.");
+  const peOffset = original.readUInt32LE(0x3c);
+  let unsigned = Buffer.from(original);
+  if (hasEmbeddedAuthenticode(original)) {
+    const optionalHeader = peOffset + 24;
+    const magic = original.readUInt16LE(optionalHeader);
+    const dataDirectory = optionalHeader + (magic === 0x20b ? 112 : magic === 0x10b ? 96 : -1);
+    const securityDirectory = dataDirectory + 32;
+    const certificateOffset = original.readUInt32LE(securityDirectory);
+    const certificateSize = original.readUInt32LE(securityDirectory + 4);
+    if (dataDirectory < optionalHeader || certificateOffset <= 0 || certificateSize <= 0 || certificateOffset + certificateSize !== original.length) {
+      throw new Error("The signing probe source has an unsupported Authenticode certificate layout.");
+    }
+    unsigned = Buffer.from(original.subarray(0, certificateOffset));
+    unsigned.writeUInt32LE(0, securityDirectory);
+    unsigned.writeUInt32LE(0, securityDirectory + 4);
+  }
+  const coffTimestampOffset = peOffset + 8;
+  unsigned.writeUInt32LE((unsigned.readUInt32LE(coffTimestampOffset) ^ 1) >>> 0, coffTimestampOffset);
+  if (!isPortableExecutable(unsigned) || hasEmbeddedAuthenticode(unsigned)) throw new Error("Could not create an unsigned signing probe copy.");
+  writeFileSync(destination, unsigned);
+  return destination;
 }
 
 function walkFiles(current, output = []) {
@@ -498,7 +542,7 @@ export function inspectAuthenticode(file, runner = runCommand, env = process.env
 }
 
 function verifyWithSignTool(file, config, runner = runCommand) {
-  runner(config.signToolPath, ["verify", "/pa", "/all", "/tw", resolve(file)], { env: minimalEnvironment(process.env) });
+  runner(config.signToolPath, ["verify", "/pa", "/all", "/tw", resolve(file)], { env: minimalEnvironment(process.env), includeFailureOutput: true });
 }
 
 export function verifySignature(file, config, options = {}) {
@@ -528,7 +572,9 @@ export function signOne(file, config, options = {}) {
   if (!isPortableExecutable(readFileSync(target))) throw new Error(`Refusing to Authenticode-sign a non-PE file: ${basename(target)}`);
   const runner = options.runner ?? runCommand;
   if (config.provider === "store") {
-    runner(config.signToolPath, buildStoreSignArgs(config, target), { env: minimalEnvironment(process.env), timeoutMs: 120_000 });
+    const commandOptions = { env: minimalEnvironment(process.env), timeoutMs: 120_000, includeFailureOutput: true };
+    runner(config.signToolPath, buildStoreSignArgs(config, target), commandOptions);
+    runner(config.signToolPath, buildTimestampArgs(config, target), commandOptions);
   } else {
     runner(config.command, buildCommandSignArgs(config, target), { env: config.providerEnvironment, timeoutMs: 120_000 });
   }
@@ -552,7 +598,9 @@ export function preflightSigningProvider(config, options = {}) {
   const probe = resolve(probeRoot, "Glacial-signing-probe.exe");
   try {
     const source = options.probeSource ?? systemExecutable("System32/where.exe", options.env ?? process.env);
-    copyFileSync(source, probe);
+    createUnsignedProbeCopy(source, probe);
+    const initialSignature = inspectAuthenticode(probe, runner, options.env);
+    if (initialSignature.status !== "NotSigned") throw new Error("The disposable signing probe is not unsigned.");
     const signature = signOne(probe, { ...config, auditLog: null }, { runner, env: options.env });
     if (signature.canonicalSubject.toUpperCase() !== expectedCanonical) throw new Error("The private-key probe used an unexpected signer subject.");
     return { expectedCanonicalSubject: expectedCanonical, canonicalSubject: signature.canonicalSubject, trustClassification: signature.trustClassification, signerThumbprint: signature.signerThumbprint, storeCertificate };

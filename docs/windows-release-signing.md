@@ -28,7 +28,7 @@ npm.cmd --prefix frontend run release:windows:signed
 
 ## Signing providers
 
-`store` mode selects exactly one certificate by normalized thumbprint from `Cert:\CurrentUser\My`. The pipeline canonicalizes the expected and actual distinguished names, requires an exact match, verifies the chain, proves private-key usability by signing and verifying a disposable PE before any expensive build, and deletes the probe directory.
+`store` mode selects exactly one certificate by normalized thumbprint from `Cert:\CurrentUser\My`. The pipeline canonicalizes the expected and actual distinguished names, requires an exact match, verifies the chain, signs and RFC 3161 timestamps in separate checked SignTool operations, proves private-key usability by verifying a disposable PE before any expensive build, and deletes the probe directory.
 
 `command` mode invokes one absolute reviewed executable directly, without a shell. Its JSON argument array contains exactly one `{file}` placeholder. Only explicitly named provider environment variables are forwarded. Credentials must not appear in command arguments, paths, logs, manifests, or tracked files. Prefer managed identity or an HSM/provider session over long-lived environment secrets.
 
@@ -170,7 +170,7 @@ All signed modes require:
 | `GLACIAL_WINDOWS_EXPECTED_SUBJECT` | Exact expected signer DN, currently `CN=Icefields Development` |
 | `GLACIAL_WINDOWS_SIGNTOOL_PATH` | Absolute path to the reviewed Windows SDK `signtool.exe` |
 | `GLACIAL_WINDOWS_REQUIRE_TIMESTAMP` | Must be `1` |
-| `GLACIAL_WINDOWS_TIMESTAMP_URL` | Credential-free HTTPS RFC 3161 endpoint with no query or fragment |
+| `GLACIAL_WINDOWS_TIMESTAMP_URL` | Credential-free HTTPS RFC 3161 endpoint, or the exact `http://timestamp.digicert.com` endpoint, with no query or fragment |
 
 Store mode also requires:
 
@@ -196,7 +196,7 @@ $env:GLACIAL_WINDOWS_SIGNING_PROVIDER = "store"
 $env:GLACIAL_WINDOWS_CERTIFICATE_THUMBPRINT = "<40-character-thumbprint>"
 $env:GLACIAL_WINDOWS_EXPECTED_SUBJECT = "CN=Icefields Development"
 $env:GLACIAL_WINDOWS_SIGNTOOL_PATH = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe"
-$env:GLACIAL_WINDOWS_TIMESTAMP_URL = "https://timestamp.digicert.com"
+$env:GLACIAL_WINDOWS_TIMESTAMP_URL = "http://timestamp.digicert.com"
 $env:GLACIAL_WINDOWS_REQUIRE_TIMESTAMP = "1"
 
 npm.cmd --prefix frontend run release:windows:plan

@@ -17,8 +17,11 @@ import {
   assertSafePath,
   buildCommandSignArgs,
   buildStoreSignArgs,
+  buildTimestampArgs,
   createPowerShellInvocation,
   createTauriSigningOverlay,
+  createUnsignedProbeCopy,
+  hasEmbeddedAuthenticode,
   isPortableExecutable,
   loadSigningConfig,
   minimalEnvironment,
@@ -86,6 +89,19 @@ function minimalPe() {
   return buffer;
 }
 
+function minimalPeWithAuthenticode() {
+  const buffer = Buffer.alloc(528);
+  minimalPe().copy(buffer);
+  const optionalHeader = 0x80 + 24;
+  buffer.writeUInt16LE(0x20b, optionalHeader);
+  buffer.writeUInt32LE(0x81234567, 0x80 + 8);
+  const securityDirectory = optionalHeader + 112 + 32;
+  buffer.writeUInt32LE(512, securityDirectory);
+  buffer.writeUInt32LE(16, securityDirectory + 4);
+  buffer.fill(0x41, 512);
+  return buffer;
+}
+
 function sourceState(overrides = {}) {
   return {
     root: REPOSITORY,
@@ -112,7 +128,7 @@ test("PowerShell helper transports hostile paths only through environment JSON",
   assert.equal(invocation.args.some((argument) => argument.includes("GLACIAL_WINDOWS_HELPER_PAYLOAD")), true);
 });
 
-test("timestamp URLs are HTTPS and credential/query/fragment free", () => {
+test("timestamp URL policy permits HTTPS and only the exact DigiCert HTTP exception", () => {
   for (const value of [
     "http://timestamp.example.test",
     "https://user:password@timestamp.example.test",
@@ -123,6 +139,9 @@ test("timestamp URLs are HTTPS and credential/query/fragment free", () => {
   }
   const config = loadSigningConfig(storeEnvironment(), { dryRun: true });
   assert.equal(config.timestampUrl, "https://timestamp.digicert.com/");
+  const digiCertHttp = loadSigningConfig(storeEnvironment({ GLACIAL_WINDOWS_TIMESTAMP_URL: "http://timestamp.digicert.com" }), { dryRun: true });
+  assert.equal(digiCertHttp.timestampUrl, "http://timestamp.digicert.com");
+  assert.throws(() => loadSigningConfig(storeEnvironment({ GLACIAL_WINDOWS_TIMESTAMP_URL: "http://timestamp.digicert.com/other" }), { dryRun: true }));
 });
 
 test("thumbprints normalize exactly and reject malformed input", () => {
@@ -143,13 +162,16 @@ test("certificate selection requires one exact canonical subject and accessible 
   assert.throws(() => assertCertificateIdentity([{ ...valid, TrustClassification: "private-trusted" }], config, "CN=ICEFIELDS DEVELOPMENT"), /private, or ambiguous/);
 });
 
-test("store arguments require SHA-256 and RFC 3161 timestamping", () => {
+test("store signing and RFC 3161 timestamping are separate checked operations", () => {
   const config = loadSigningConfig(storeEnvironment(), { dryRun: true });
-  const args = buildStoreSignArgs(config, "C:\\Payload With Space\\Glacial.exe");
-  assert.deepEqual(args.slice(0, 6), ["sign", "/fd", "SHA256", "/sha1", THUMBPRINT, "/d"]);
-  assert.ok(args.includes("/tr"));
-  assert.ok(args.includes("/td"));
-  assert.equal(args.at(-1), "C:\\Payload With Space\\Glacial.exe");
+  const file = "C:\\Payload With Space\\Glacial.exe";
+  const signArgs = buildStoreSignArgs(config, file);
+  const timestampArgs = buildTimestampArgs(config, file);
+  assert.deepEqual(signArgs.slice(0, 7), ["sign", "/debug", "/v", "/s", "My", "/sha1", THUMBPRINT]);
+  assert.equal(signArgs.includes("/tr"), false);
+  assert.deepEqual(timestampArgs.slice(0, 7), ["timestamp", "/debug", "/v", "/tr", config.timestampUrl, "/td", "SHA256"]);
+  assert.equal(signArgs.at(-1), file);
+  assert.equal(timestampArgs.at(-1), file);
 });
 
 test("command provider keeps the file as one direct argument and forwards only named environment", () => {
@@ -181,6 +203,19 @@ test("base child environment excludes unrelated credential variables", () => {
   assert.ok(environment.SYSTEMROOT || environment.SystemRoot || environment.WINDIR);
 });
 
+test("opt-in signing failure diagnostics are useful, bounded, and control-character sanitized", () => {
+  assert.throws(
+    () => runCommand(process.execPath, ["-e", "process.stdout.write('certificate selected\\u001b[31m'); process.stderr.write('timestamp unavailable'); process.exit(1)"], { env: minimalEnvironment(process.env), includeFailureOutput: true }),
+    (error) => {
+      assert.match(error.message, /certificate selected/);
+      assert.match(error.message, /timestamp unavailable/);
+      assert.equal(error.message.includes("\u001b"), false);
+      assert.equal(error.message.includes("[31m"), false);
+      return true;
+    },
+  );
+});
+
 test("Tauri overlay uses object-form direct arguments and no embedded certificate identity", () => {
   const overlay = createTauriSigningOverlay("C:\\Program Files\\nodejs\\node.exe", "C:\\Repo With Space\\windows-signing.mjs");
   assert.deepEqual(overlay.bundle.windows.signCommand, {
@@ -207,6 +242,20 @@ test("PE discovery classification preserves valid vendor signatures and rejects 
   assert.throws(() => planBackendSigning([{ relativePath: "broken.pyd", signature: { status: "HashMismatch" }, embeddedSignature: true }]));
 });
 
+test("the disposable probe removes an existing Authenticode table only from its copy", () => {
+  const source = join(TEST_ROOT, "signed-probe-source.exe");
+  const destination = join(TEST_ROOT, "unsigned-probe-copy.exe");
+  mkdirSync(TEST_ROOT, { recursive: true });
+  const original = minimalPeWithAuthenticode();
+  writeFileSync(source, original);
+  assert.equal(hasEmbeddedAuthenticode(readFileSync(source)), true);
+  createUnsignedProbeCopy(source, destination);
+  assert.deepEqual(readFileSync(source), original);
+  assert.notDeepEqual(readFileSync(destination), original);
+  assert.equal(hasEmbeddedAuthenticode(readFileSync(destination)), false);
+  assert.equal(isPortableExecutable(readFileSync(destination)), true);
+});
+
 test("reparse-point output ancestors are rejected before mutation", () => {
   const root = join(TEST_ROOT, "safe-root");
   mkdirSync(root, { recursive: true });
@@ -221,14 +270,18 @@ test("private-key probe fails before builds and cleans disposable files on times
   const probeSource = join(TEST_ROOT, "probe-source.exe");
   writeFileSync(probeSource, minimalPe());
   const config = loadSigningConfig(storeEnvironment(), { dryRun: true });
+  const calls = [];
   const runner = (command, args, options = {}) => {
     const operation = options.env?.GLACIAL_WINDOWS_HELPER_OPERATION;
     if (operation === "canonical-subject") return { status: 0, stdout: '{"CanonicalSubject":"CN=ICEFIELDS DEVELOPMENT"}', stderr: "" };
     if (operation === "certificate") return { status: 0, stdout: JSON.stringify({ Candidates: [{ Thumbprint: THUMBPRINT, CanonicalSubject: "CN=ICEFIELDS DEVELOPMENT", HasPrivateKey: true, TrustValid: true, TrustClassification: "self-signed" }] }), stderr: "" };
-    if (args[0] === "sign") throw new Error("timestamp service unavailable");
+    if (operation === "signature") return { status: 0, stdout: JSON.stringify({ Status: "NotSigned", StatusMessage: "The file is not digitally signed.", SignerThumbprint: null, CanonicalSubject: null, TimestampThumbprint: null, TrustValid: false, TrustClassification: "invalid", ChainStatuses: [] }), stderr: "" };
+    if (args[0] === "sign") { calls.push("sign"); return { status: 0, stdout: "Successfully signed", stderr: "" }; }
+    if (args[0] === "timestamp") { calls.push("timestamp"); throw new Error("timestamp service unavailable"); }
     throw new Error(`Unexpected probe command: ${command}`);
   };
   assert.throws(() => preflightSigningProvider(config, { probeParent, probeSource, runner, pathInspector: false }), /timestamp service unavailable/);
+  assert.deepEqual(calls, ["sign", "timestamp"]);
   assert.deepEqual(readFileSync(probeSource), minimalPe());
   assert.equal(existsSync(probeParent), true);
   assert.equal(readFileSync(probeSource).length, 256);
@@ -242,17 +295,20 @@ test("private-key probe signs, verifies, derives trust, and removes its disposab
   writeFileSync(probeSource, minimalPe());
   const config = loadSigningConfig(storeEnvironment(), { dryRun: true });
   const signature = { Status: "Valid", StatusMessage: "Signature verified.", SignerThumbprint: THUMBPRINT, CanonicalSubject: "CN=ICEFIELDS DEVELOPMENT", TimestampThumbprint: "B".repeat(40), TrustValid: true, TrustClassification: "self-signed", ChainStatuses: [] };
+  const calls = [];
+  let signed = false;
   const runner = (command, args, options = {}) => {
     const operation = options.env?.GLACIAL_WINDOWS_HELPER_OPERATION;
     if (operation === "canonical-subject") return { status: 0, stdout: '{"CanonicalSubject":"CN=ICEFIELDS DEVELOPMENT"}', stderr: "" };
     if (operation === "certificate") return { status: 0, stdout: JSON.stringify({ Candidates: [{ Thumbprint: THUMBPRINT, CanonicalSubject: "CN=ICEFIELDS DEVELOPMENT", HasPrivateKey: true, TrustValid: true, TrustClassification: "self-signed" }] }), stderr: "" };
-    if (operation === "signature") return { status: 0, stdout: JSON.stringify(signature), stderr: "" };
-    if (args[0] === "sign" || args[0] === "verify") return { status: 0, stdout: "", stderr: "" };
+    if (operation === "signature") return { status: 0, stdout: JSON.stringify(signed ? signature : { Status: "NotSigned", StatusMessage: "The file is not digitally signed.", SignerThumbprint: null, CanonicalSubject: null, TimestampThumbprint: null, TrustValid: false, TrustClassification: "invalid", ChainStatuses: [] }), stderr: "" };
+    if (["sign", "timestamp", "verify"].includes(args[0])) { calls.push(args[0]); if (args[0] === "sign") signed = true; return { status: 0, stdout: "", stderr: "" }; }
     throw new Error(`Unexpected probe command: ${command}`);
   };
   const identity = preflightSigningProvider(config, { probeParent, probeSource, runner, pathInspector: false });
   assert.equal(identity.signerThumbprint, THUMBPRINT);
   assert.equal(identity.trustClassification, "self-signed");
+  assert.deepEqual(calls, ["sign", "timestamp", "verify"]);
   assert.deepEqual(readdirSync(probeParent), []);
 });
 
