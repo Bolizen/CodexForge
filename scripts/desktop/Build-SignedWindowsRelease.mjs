@@ -115,17 +115,71 @@ export function assertSameReleaseSource(before, after) {
   return true;
 }
 
-function parseRequirementsLock(path) {
-  return readFileSync(path, "utf8").split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#")).map((line) => line.split(/[ ;]/, 1)[0].toLowerCase().replaceAll("_", "-")).sort();
+export function canonicalizePackageName(value) {
+  return String(value).toLowerCase().replace(/[-_.]+/g, "-");
+}
+
+function decodeRequirementsLock(path) {
+  const bytes = readFileSync(path);
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return bytes.subarray(2).toString("utf16le");
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) {
+    const littleEndian = Buffer.from(bytes.subarray(2));
+    if (littleEndian.length % 2 !== 0) throw new Error(`Requirements lock has invalid UTF-16BE byte length: ${relative(REPOSITORY, path)}`);
+    littleEndian.swap16();
+    return littleEndian.toString("utf16le");
+  }
+  const start = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf ? 3 : 0;
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes.subarray(start));
+  } catch {
+    throw new Error(`Requirements lock is not valid UTF-8, UTF-16LE, or UTF-16BE: ${relative(REPOSITORY, path)}`);
+  }
+}
+
+export function parseRequirementsLock(path) {
+  return decodeRequirementsLock(path).split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#")).map((line, index) => {
+    const requirement = line.split(/[ ;]/, 1)[0];
+    const separator = requirement.indexOf("==");
+    if (separator <= 0 || separator === requirement.length - 2) throw new Error(`Requirements lock entry ${index + 1} is not an exact name==version pin: ${relative(REPOSITORY, path)}`);
+    return `${canonicalizePackageName(requirement.slice(0, separator))}==${requirement.slice(separator + 2)}`;
+  }).sort();
+}
+
+export function normalizeInstalledPackages(items) {
+  return items.filter((item) => canonicalizePackageName(item.name) !== "pip").map((item) => `${canonicalizePackageName(item.name)}==${item.version}`).sort();
+}
+
+export function assertInterpreterIdentity(python, identity) {
+  const expectedExecutable = resolve(python).toLowerCase();
+  const expectedPrefix = resolve(dirname(dirname(python))).toLowerCase();
+  if (resolve(identity.executable).toLowerCase() !== expectedExecutable || resolve(identity.prefix).toLowerCase() !== expectedPrefix) {
+    throw new Error(`Python interpreter identity mismatch; expected ${expectedExecutable} with prefix ${expectedPrefix}.`);
+  }
+  return true;
 }
 
 function installedPackages(python, environment) {
+  const identity = JSON.parse(runText(python, ["-c", "import json, sys; print(json.dumps({'executable': sys.executable, 'prefix': sys.prefix}))"], { cwd: REPOSITORY, env: environment }));
+  assertInterpreterIdentity(python, identity);
   const result = JSON.parse(runText(python, ["-m", "pip", "list", "--format=json"], { cwd: REPOSITORY, env: environment }));
-  return result.filter((item) => item.name.toLowerCase() !== "pip").map((item) => `${item.name.toLowerCase()}==${item.version}`.replaceAll("_", "-")).sort();
+  return normalizeInstalledPackages(result);
 }
 
-function equalStringArrays(left, right) {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
+export function packageSetDifference(approved, actual) {
+  const approvedSet = new Set(approved);
+  const actualSet = new Set(actual);
+  return {
+    missing: approved.filter((value) => !actualSet.has(value)),
+    unexpected: actual.filter((value) => !approvedSet.has(value)),
+  };
+}
+
+export function assertExactPackageSet(label, approved, actual) {
+  const difference = packageSetDifference(approved, actual);
+  if (difference.missing.length === 0 && difference.unexpected.length === 0 && approved.length === actual.length) return true;
+  const missing = difference.missing.length > 0 ? difference.missing.join(", ") : "(none)";
+  const unexpected = difference.unexpected.length > 0 ? difference.unexpected.join(", ") : "(none)";
+  throw new Error(`${label}\nMissing from environment: ${missing}\nUnexpected in environment: ${unexpected}`);
 }
 
 export function validateDesktopBuildEnvironment(options = {}) {
@@ -140,8 +194,8 @@ export function validateDesktopBuildEnvironment(options = {}) {
   const approvedRuntime = parseRequirementsLock(runtimeLock);
   const actualBuild = installedPackages(buildPython, environment);
   const actualRuntime = validateRuntime ? installedPackages(runtimePython, environment) : null;
-  if (!equalStringArrays(approvedBuild, actualBuild)) throw new Error("Desktop build packages do not match the exact build lock.");
-  if (validateRuntime && !equalStringArrays(approvedRuntime, actualRuntime)) throw new Error("Backend runtime packages do not match requirements.lock.txt.");
+  assertExactPackageSet("Desktop build packages do not match the exact build lock.", approvedBuild, actualBuild);
+  if (validateRuntime) assertExactPackageSet("Backend runtime packages do not match requirements.lock.txt.", approvedRuntime, actualRuntime);
   runCommand(buildPython, ["-m", "pip", "check"], { cwd: REPOSITORY, env: environment });
   if (validateRuntime) runCommand(runtimePython, ["-m", "pip", "check"], { cwd: REPOSITORY, env: environment });
   if (runText(buildPython, ["-m", "PyInstaller", "--version"], { env: environment }) !== "6.21.0") throw new Error("PyInstaller 6.21.0 is required.");

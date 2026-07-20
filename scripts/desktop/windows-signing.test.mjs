@@ -35,8 +35,14 @@ import {
   signingEnvironment,
 } from "./windows-signing.mjs";
 import {
+  assertExactPackageSet,
   assertFileIdentity,
+  assertInterpreterIdentity,
   assertSameReleaseSource,
+  canonicalizePackageName,
+  normalizeInstalledPackages,
+  packageSetDifference,
+  parseRequirementsLock,
   publishCandidate,
   runReleaseSteps,
   verifyPublishedHashes,
@@ -117,6 +123,39 @@ function sourceState(overrides = {}) {
 
 test.beforeEach(cleanTestRoot);
 test.after(cleanTestRoot);
+
+test("runtime package locks decode UTF-16LE and use PEP-compatible name canonicalization", () => {
+  const lock = join(TEST_ROOT, "requirements.lock.txt");
+  mkdirSync(TEST_ROOT, { recursive: true });
+  const content = "Typing_Extensions==4.15.0\r\npydantic.core==2.46.4\r\n";
+  writeFileSync(lock, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(content, "utf16le")]));
+  assert.deepEqual(parseRequirementsLock(lock), ["pydantic-core==2.46.4", "typing-extensions==4.15.0"]);
+  assert.equal(canonicalizePackageName("A..B___C---D"), "a-b-c-d");
+  assert.deepEqual(normalizeInstalledPackages([
+    { name: "pip", version: "26.0.1" },
+    { name: "Typing_Extensions", version: "4.15.0" },
+    { name: "pydantic.core", version: "2.46.4" },
+  ]), ["pydantic-core==2.46.4", "typing-extensions==4.15.0"]);
+});
+
+test("runtime package mismatches report missing and unexpected entries", () => {
+  const approved = ["alpha==1", "bravo==2"];
+  const actual = ["alpha==1", "charlie==3"];
+  assert.deepEqual(packageSetDifference(approved, actual), { missing: ["bravo==2"], unexpected: ["charlie==3"] });
+  assert.throws(() => assertExactPackageSet("Runtime mismatch.", approved, actual), (error) => {
+    assert.match(error.message, /Missing from environment: bravo==2/);
+    assert.match(error.message, /Unexpected in environment: charlie==3/);
+    return true;
+  });
+});
+
+test("runtime package checks require the intended interpreter and virtual-environment prefix", () => {
+  const python = join(REPOSITORY, "backend", ".venv", "Scripts", "python.exe");
+  const prefix = join(REPOSITORY, "backend", ".venv");
+  assert.equal(assertInterpreterIdentity(python, { executable: python, prefix }), true);
+  assert.throws(() => assertInterpreterIdentity(python, { executable: join(prefix, "other.exe"), prefix }), /identity mismatch/);
+  assert.throws(() => assertInterpreterIdentity(python, { executable: python, prefix: join(REPOSITORY, "backend", "other-venv") }), /identity mismatch/);
+});
 
 test("PowerShell helper transports hostile paths only through environment JSON", () => {
   const hostile = "C:\\Repo With Space\\quote' ; & | (payload)\\Glacial.exe";
