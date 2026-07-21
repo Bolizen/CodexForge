@@ -215,7 +215,7 @@ The coordinator performs this order:
 3. Verify build/runtime environments, build the backend once, preserve valid vendor bytes, and sign every unsigned PE.
 4. Stage the signed backend and let Tauri sign Glacial.exe, supported NSIS components, uninstaller, and final installer; the custom signer atomically captures the one verified NSIS-patched Glacial.exe before Tauri restores its working file.
 5. Verify the final installer, captured application, exact signing audit event, restored working-file state, and generated NSIS main-binary source; reuse only the captured signed Glacial.exe bytes for portable assembly.
-6. Create and re-extract the portable ZIP; compare every source/archive file and reverify every PE.
+6. Create the portable ZIP with Windows-compatible root entry names, validate Explorer visibility, re-extract it with both Windows `Expand-Archive` and `tar.exe`, compare every source/archive file, and reverify every PE.
 7. Generate final manifest and hashes only after all binary mutation is complete.
 8. Recheck branch, HEAD, origin/main, clean status, and release metadata.
 9. Atomically publish a new unique candidate directory.

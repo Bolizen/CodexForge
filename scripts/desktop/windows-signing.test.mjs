@@ -31,6 +31,7 @@ import {
   preflightSigningProvider,
   removeSafeTree,
   resolveNpmInvocation,
+  resolveSystemExecutable,
   runCommand,
   sha256,
   signOne,
@@ -45,6 +46,7 @@ import {
   assertSameReleaseSource,
   canonicalizePackageName,
   copyCapturedApplication,
+  createPortableZip,
   normalizeInstalledPackages,
   packageSetDifference,
   parseRequirementsLock,
@@ -52,6 +54,8 @@ import {
   requireApplicationCapture,
   requireSigningEvents,
   runReleaseSteps,
+  validatePortableZipEntryNames,
+  verifyPortableArchiveCompatibility,
   verifyPublishedHashes,
 } from "./Build-SignedWindowsRelease.mjs";
 import { developmentPlan, runDevelopmentCommand } from "./desktop-development.mjs";
@@ -59,6 +63,7 @@ import { developmentPlan, runDevelopmentCommand } from "./desktop-development.mj
 const TEST_PATH = fileURLToPath(import.meta.url);
 const REPOSITORY = resolve(dirname(TEST_PATH), "..", "..");
 const TEST_ROOT = join(DESKTOP_BUILD_ROOT, "release-signing-tests");
+const PORTABLE_ZIP_TEST_ROOT = join(DESKTOP_BUILD_ROOT, "portable-zip-tests", String(process.pid));
 const FAILED_RC = join(DESKTOP_BUILD_ROOT, "release-candidates", "Glacial-0.4.0-fbf96d568350-20260719T065059Z");
 const THUMBPRINT = "A".repeat(40);
 const RELEASE_ID = "Glacial-0.4.0-ffffffffffff-20260720T120000Z";
@@ -442,6 +447,54 @@ test("Tauri signing evidence requires one transient uninstaller between plugins 
   const installerEvent = { ...identity, path: installer, sha256: "F".repeat(64) };
   assert.equal(requireSigningEvents([application, ...plugins, uninstaller, installerEvent], config, installer, "CN=ICEFIELDS DEVELOPMENT").uninstallerEvent, uninstaller);
   assert.throws(() => requireSigningEvents([application, ...plugins, installerEvent], config, installer, "CN=ICEFIELDS DEVELOPMENT"), /transient NSIS uninstaller/);
+});
+
+test("production portable ZIP is visible to Windows and extracts identically with Expand-Archive and tar.exe", () => {
+  const source = join(PORTABLE_ZIP_TEST_ROOT, "source");
+  const archive = join(PORTABLE_ZIP_TEST_ROOT, "Glacial-portable.zip");
+  const verificationRoot = join(PORTABLE_ZIP_TEST_ROOT, "verification");
+  try {
+    mkdirSync(join(source, "_internal", "nested"), { recursive: true });
+    writeFileSync(join(source, "Glacial.exe"), minimalPe());
+    writeFileSync(join(source, "glacial-backend.exe"), Buffer.concat([minimalPe(), Buffer.from("backend")]));
+    writeFileSync(join(source, "_internal", "runtime.dll"), Buffer.from("runtime"));
+    writeFileSync(join(source, "_internal", "nested", "data.txt"), Buffer.from("data"));
+    const tarPath = resolveSystemExecutable("System32/tar.exe");
+    const powershellPath = resolveSystemExecutable("System32/WindowsPowerShell/v1.0/powershell.exe");
+
+    createPortableZip(powershellPath, source, archive);
+    const result = verifyPortableArchiveCompatibility(tarPath, powershellPath, archive, source, verificationRoot);
+    assert.ok(result.explorerShellItemCount > 0);
+    assert.deepEqual(result.entryNames.filter((name) => !name.endsWith("/")).sort(), ["Glacial.exe", "_internal/nested/data.txt", "_internal/runtime.dll", "glacial-backend.exe"].sort());
+    assert.ok(result.entryNames.every((name) => !name.startsWith("./")));
+    const windowsFiles = new Map(result.windowsFiles);
+    const tarFiles = new Map(result.tarFiles);
+    for (const relativePath of ["Glacial.exe", "glacial-backend.exe", "_internal/runtime.dll", "_internal/nested/data.txt"]) {
+      const sourcePath = join(source, ...relativePath.split("/"));
+      assert.equal(windowsFiles.get(relativePath).sha256, sha256(sourcePath));
+      assert.equal(tarFiles.get(relativePath).sha256, sha256(sourcePath));
+    }
+    assert.equal(windowsFiles.get("Glacial.exe").sha256, sha256(join(source, "Glacial.exe")));
+    assert.equal(existsSync(verificationRoot), false);
+  } finally {
+    removeSafeTree(DESKTOP_BUILD_ROOT, PORTABLE_ZIP_TEST_ROOT, { pathInspector: false });
+  }
+});
+
+test("portable ZIP entry validation rejects empty, hidden-root, absolute, drive-qualified, traversal, and wrapped archives", () => {
+  const valid = ["Glacial.exe", "glacial-backend.exe", "_internal/runtime.dll"];
+  assert.deepEqual(validatePortableZipEntryNames(valid, 3), valid);
+  assert.throws(() => validatePortableZipEntryNames([], 0), /no archive entries/);
+  assert.throws(() => validatePortableZipEntryNames(valid, 0), /appears empty/);
+  for (const entries of [
+    ["./Glacial.exe", "glacial-backend.exe", "_internal/runtime.dll"],
+    ["/Glacial.exe", "glacial-backend.exe", "_internal/runtime.dll"],
+    ["\\Glacial.exe", "glacial-backend.exe", "_internal/runtime.dll"],
+    ["C:/Glacial.exe", "glacial-backend.exe", "_internal/runtime.dll"],
+    ["Glacial.exe", "glacial-backend.exe", "_internal/../runtime.dll"],
+    ["Glacial.exe", "glacial-backend.exe", "_internal\\..\\runtime.dll"],
+    ["wrapper/Glacial.exe", "glacial-backend.exe", "_internal/runtime.dll"],
+  ]) assert.throws(() => validatePortableZipEntryNames(entries, 3), /Unsafe|Unexpected/);
 });
 
 test("release source revalidation rejects every mutable provenance field", () => {

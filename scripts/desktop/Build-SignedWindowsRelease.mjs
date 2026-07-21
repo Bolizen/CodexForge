@@ -45,7 +45,9 @@ const TAURI_TARGET = join(FRONTEND, "src-tauri", "target", "release");
 const PORTABLE_ROOT = join(DESKTOP_BUILD_ROOT, "portable", "Glacial");
 const RELEASE_CANDIDATES = join(DESKTOP_BUILD_ROOT, "release-candidates");
 const RELEASE_WORK = join(DESKTOP_BUILD_ROOT, "release-work");
+const EXPAND_PORTABLE_ARCHIVE_SCRIPT = join(REPOSITORY, "scripts", "desktop", "Expand-PortableArchive.ps1");
 const EXPECTED_NSIS_COMPONENTS = ["NSISdl.dll", "StartMenu.dll", "System.dll", "nsDialogs.dll", "nsis_tauri_utils.dll"];
+const PORTABLE_ARCHIVE_ROOTS = ["Glacial.exe", "glacial-backend.exe", "_internal"];
 
 function redact(text, secretValues = []) {
   let value = String(text ?? "");
@@ -352,26 +354,98 @@ function fileInventory(root) {
   return new Map(listPayloadFiles(root).map((path) => [relative(root, path).replaceAll("\\", "/"), { bytes: statSync(path).size, sha256: sha256(path) }]));
 }
 
-function createPortableZip(tarPath, source, destination) {
+export function createPortableZip(powershellPath, source, destination) {
   if (existsSync(destination)) throw new Error(`Refusing to overwrite an existing portable archive: ${destination}`);
-  runVisible(tarPath, ["-a", "-c", "-f", resolve(destination), "-C", resolve(source), "."], { env: minimalEnvironment(process.env) });
+  for (const name of PORTABLE_ARCHIVE_ROOTS) if (!existsSync(join(source, name))) throw new Error(`The portable archive input is missing: ${name}`);
+  const result = invokePortableArchivePowerShell(powershellPath, "create", destination, { source });
+  if (!Number.isInteger(result.CreatedEntries) || result.CreatedEntries <= 0) throw new Error("The Windows ZIP writer produced no portable entries.");
   if (!existsSync(destination)) throw new Error("The archive tool did not produce the portable ZIP.");
 }
 
-function verifyPortableArchive(tarPath, archive, source, verificationRoot, config, expectedCanonicalSubject) {
+export function validatePortableZipEntryNames(entryNames, explorerShellItemCount) {
+  if (!Array.isArray(entryNames) || !entryNames.length) throw new Error("The Windows-compatible ZIP reader found no archive entries.");
+  if (!Number.isInteger(explorerShellItemCount) || explorerShellItemCount <= 0) throw new Error("The portable ZIP appears empty to the Windows Explorer shell API.");
+  const seen = new Set();
+  let application = false;
+  let backend = false;
+  let internalFile = false;
+  for (const name of entryNames) {
+    if (typeof name !== "string" || !name || name.startsWith("./") || name.startsWith("/") || name.startsWith("\\") || /^[A-Za-z]:/.test(name) || name.includes("\\")) throw new Error(`Unsafe or incompatible portable ZIP entry: ${name}`);
+    const directory = name.endsWith("/");
+    const trimmed = directory ? name.slice(0, -1) : name;
+    const segments = trimmed.split("/");
+    if (!trimmed || segments.some((segment) => !segment || segment === "." || segment === "..")) throw new Error(`Unsafe or incompatible portable ZIP entry: ${name}`);
+    const canonical = trimmed.toLowerCase();
+    if (seen.has(canonical)) throw new Error(`Duplicate portable ZIP entry: ${name}`);
+    seen.add(canonical);
+    if (segments[0] === "Glacial.exe") {
+      if (segments.length !== 1 || directory) throw new Error(`Unexpected Glacial.exe archive path: ${name}`);
+      application = true;
+    } else if (segments[0] === "glacial-backend.exe") {
+      if (segments.length !== 1 || directory) throw new Error(`Unexpected glacial-backend.exe archive path: ${name}`);
+      backend = true;
+    } else if (segments[0] === "_internal") {
+      if (!directory && segments.length > 1) internalFile = true;
+      if (!directory && segments.length === 1) throw new Error("_internal must be a directory in the portable ZIP.");
+    } else {
+      throw new Error(`Unexpected portable ZIP root entry: ${name}`);
+    }
+  }
+  if (!application || !backend || !internalFile) throw new Error("The portable ZIP is missing an expected root payload.");
+  return entryNames;
+}
+
+function invokePortableArchivePowerShell(powershellPath, operation, archive, paths = {}) {
+  const payload = { operation, archive: resolve(archive) };
+  for (const [name, path] of Object.entries(paths)) payload[name] = resolve(path);
+  const environment = minimalEnvironment(process.env, { GLACIAL_PORTABLE_ZIP_VALIDATION_JSON: JSON.stringify(payload) });
+  const helperScript = readFileSync(EXPAND_PORTABLE_ARCHIVE_SCRIPT, "utf8");
+  const result = runCommand(powershellPath, ["-NoProfile", "-NonInteractive", "-Command", helperScript], { env: environment, includeFailureOutput: true });
+  return JSON.parse(String(result.stdout).trim());
+}
+
+function assertInventoryMatches(sourceFiles, extractedFiles, label) {
+  if (sourceFiles.size !== extractedFiles.size) throw new Error(`${label} file set does not match the portable source directory.`);
+  for (const [path, expected] of sourceFiles) {
+    const actual = extractedFiles.get(path);
+    if (!actual || actual.bytes !== expected.bytes || actual.sha256 !== expected.sha256) throw new Error(`${label} changed or omitted ${path}.`);
+  }
+}
+
+function extractAndVerifyPortableArchive(tarPath, powershellPath, archive, source, verificationRoot) {
   if (existsSync(verificationRoot)) throw new Error("Refusing to overwrite an existing ZIP verification directory.");
   ensureSafeDirectory(DESKTOP_BUILD_ROOT, verificationRoot);
+  const windowsRoot = join(verificationRoot, "expand-archive");
+  const tarRoot = join(verificationRoot, "tar");
+  const inspection = invokePortableArchivePowerShell(powershellPath, "inspect", archive);
+  const entryNames = validatePortableZipEntryNames(inspection.Entries, inspection.ExplorerShellItemCount);
+  invokePortableArchivePowerShell(powershellPath, "expand", archive, { destination: windowsRoot });
+  ensureSafeDirectory(DESKTOP_BUILD_ROOT, tarRoot);
+  const tarEntries = runText(tarPath, ["-t", "-f", resolve(archive)], { env: minimalEnvironment(process.env) }).split(/\r?\n/).filter(Boolean);
+  validatePortableZipEntryNames(tarEntries, inspection.ExplorerShellItemCount);
+  runVisible(tarPath, ["-x", "-f", resolve(archive), "-C", resolve(tarRoot)], { env: minimalEnvironment(process.env) });
+  const sourceFiles = fileInventory(source);
+  const windowsFiles = fileInventory(windowsRoot);
+  const tarFiles = fileInventory(tarRoot);
+  assertInventoryMatches(sourceFiles, windowsFiles, "Expand-Archive extraction");
+  assertInventoryMatches(sourceFiles, tarFiles, "tar.exe extraction");
+  return { entryNames, explorerShellItemCount: inspection.ExplorerShellItemCount, sourceFiles, windowsFiles, tarFiles, windowsRoot };
+}
+
+export function verifyPortableArchiveCompatibility(tarPath, powershellPath, archive, source, verificationRoot) {
   try {
-    runVisible(tarPath, ["-x", "-f", resolve(archive), "-C", resolve(verificationRoot)], { env: minimalEnvironment(process.env) });
-    const sourceFiles = fileInventory(source);
-    const archiveFiles = fileInventory(verificationRoot);
-    if (sourceFiles.size !== archiveFiles.size) throw new Error("The portable ZIP file set does not match its source directory.");
-    for (const [path, expected] of sourceFiles) {
-      const actual = archiveFiles.get(path);
-      if (!actual || actual.bytes !== expected.bytes || actual.sha256 !== expected.sha256) throw new Error(`The portable ZIP changed or omitted ${path}.`);
-    }
-    auditPortablePayload(verificationRoot);
-    return verifyPayloadTree(verificationRoot, config, { requiredFirstParty: ["Glacial.exe", "glacial-backend.exe"], expectedCanonicalSubject });
+    const result = extractAndVerifyPortableArchive(tarPath, powershellPath, archive, source, verificationRoot);
+    return { entryNames: result.entryNames, explorerShellItemCount: result.explorerShellItemCount, windowsFiles: [...result.windowsFiles.entries()], tarFiles: [...result.tarFiles.entries()] };
+  } finally {
+    removeSafeTree(DESKTOP_BUILD_ROOT, verificationRoot);
+  }
+}
+
+function verifyPortableArchive(tarPath, powershellPath, archive, source, verificationRoot, config, expectedCanonicalSubject) {
+  try {
+    const result = extractAndVerifyPortableArchive(tarPath, powershellPath, archive, source, verificationRoot);
+    auditPortablePayload(result.windowsRoot);
+    return verifyPayloadTree(result.windowsRoot, config, { requiredFirstParty: ["Glacial.exe", "glacial-backend.exe"], expectedCanonicalSubject });
   } finally {
     removeSafeTree(DESKTOP_BUILD_ROOT, verificationRoot);
   }
@@ -467,6 +541,7 @@ async function buildSignedRelease() {
   const rustcPath = resolveToolExecutable("rustc.exe", process.env, { forbiddenRoot: REPOSITORY });
   const npm = resolveNpmInvocation(process.env, { forbiddenRoot: REPOSITORY });
   const tarPath = resolveSystemExecutable("System32/tar.exe");
+  const powershellPath = resolveSystemExecutable("System32/WindowsPowerShell/v1.0/powershell.exe");
   const source = verifyReleaseSource(gitPath);
   const started = new Date();
   const buildStartedUtc = started.toISOString();
@@ -514,8 +589,8 @@ async function buildSignedRelease() {
       copyFileSync(state.installer, state.installerDestination, constants.COPYFILE_EXCL);
       verifySignature(state.installerDestination, config, { expectFirstParty: true, expectedCanonicalSubject: signerIdentity.expectedCanonicalSubject });
       state.portableZip = join(workRoot, "artifacts", `Glacial_${source.version}_x64-portable.zip`);
-      createPortableZip(tarPath, PORTABLE_ROOT, state.portableZip);
-      verifyPortableArchive(tarPath, state.portableZip, PORTABLE_ROOT, join(workRoot, "zip-verification"), config, signerIdentity.expectedCanonicalSubject);
+      createPortableZip(powershellPath, PORTABLE_ROOT, state.portableZip);
+      verifyPortableArchive(tarPath, powershellPath, state.portableZip, PORTABLE_ROOT, join(workRoot, "zip-verification"), config, signerIdentity.expectedCanonicalSubject);
     } },
     { name: "write-metadata", run: () => { state.metadata = writeReleaseMetadata({ workRoot, source, signerIdentity, installer: state.installerDestination, portableZip: state.portableZip, portablePeRecords: state.portablePeRecords, backendSigningRecords: state.backendSigningRecords, signingEvents: state.signingEvents, payloadAudit: state.payloadAudit, buildStartedUtc, applicationSha256: state.applicationSha256, installerApplicationEvidence: state.installerApplicationEvidence }); } },
     { name: "publish", run: () => publishCandidate({ workRoot, finalRoot, sourceBefore: source, integrityVerifier: () => verifyPublishedHashes(workRoot, state.metadata.manifestPath, state.metadata.sumsPath), sourceVerifier: () => verifyReleaseSource(gitPath) }) },
