@@ -58,6 +58,29 @@ When changing file-writing or path-handling code, include tests for:
 
 
 
+
+## Test-efficiency policy
+
+Use the smallest test set capable of validating the change.
+
+Validation levels are `targeted` for directly relevant checks (the default), `broad` for wider affected-area suites when the exceptions below apply, and `release` for complete release-candidate validation.
+
+- Begin with tests directly covering changed files or behavior.
+- Do not run the complete frontend, backend, packaging, signing, or release suites unless:
+  - the change is cross-cutting or security-critical;
+  - a targeted test indicates broader risk;
+  - this is an explicit release-candidate validation;
+  - the user explicitly requests the full suite.
+- Do not rerun an unchanged passing suite within the same task unless new changes could affect it.
+- Prefer quiet or summary test output. Write verbose logs to disk and report only failures and aggregate results.
+- Stop diagnostic investigation once the root cause is proven unless additional evidence is needed to choose or verify a fix.
+- Do not recompute hashes or inventories for immutable historical artifacts unless the task could have modified them.
+- Separate implementation validation from release validation.
+- Before running unusually broad or expensive validation, explain why it is necessary.
+
+
+
+
 ## Numbered Google Drive handoffs
 
 A task prompt may begin with a zero-padded three-digit handoff ID, such as `001`.
