@@ -1028,6 +1028,107 @@ pre {
   margin-top: 14px;
 }
 
+.finding-workbench {
+  background: var(--color-surface-inset);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+  padding: var(--space-4);
+}
+
+.finding-workbench-heading,
+.finding-workbench-actions {
+  align-items: center;
+  display: flex;
+  gap: var(--space-3);
+  justify-content: space-between;
+}
+
+.finding-workbench-heading h3,
+.finding-workbench-heading p {
+  margin: 0;
+}
+
+.finding-workbench-heading p,
+.finding-workbench-actions span {
+  color: var(--color-text-muted);
+}
+
+.finding-workbench-progress {
+  align-items: end;
+  display: grid;
+  gap: 2px;
+  min-width: 150px;
+}
+
+.finding-workbench-progress strong {
+  font-size: 1.05rem;
+}
+
+.finding-workbench-progress span {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+.finding-workbench-progress progress {
+  accent-color: var(--color-accent);
+  max-width: 180px;
+  width: 100%;
+}
+
+.finding-workbench-filters {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(3, minmax(120px, 0.7fr)) minmax(180px, 1.4fr);
+}
+
+.finding-workbench-filters label {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.finding-workbench-filters input,
+.finding-workbench-filters select {
+  min-width: 0;
+  width: 100%;
+}
+
+.finding-workbench-queue {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.finding-workbench-item {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-3);
+}
+
+.finding-workbench-item.active {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px var(--color-accent-soft);
+}
+
+.finding-workbench-item > .finding {
+  border-top: 0;
+  margin-top: 0;
+}
+
+.category-detail-views {
+  border-top: 1px solid var(--color-border-subtle);
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+}
+
+.category-detail-views > summary {
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-weight: 700;
+}
+
 .scan-card {
   padding: 14px;
 }
@@ -2905,6 +3006,11 @@ label,
     right: 28px;
     width: min(28rem, calc(100vw - 56px));
   }
+
+  .finding-workbench-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
 }
 
 @media (max-width: 620px) {
@@ -2990,6 +3096,22 @@ label,
 
   .category-header span:not(:first-child) {
     display: none;
+  }
+
+  .finding-workbench-heading,
+  .finding-workbench-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .finding-workbench-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .finding-workbench-progress,
+  .finding-workbench-progress progress {
+    max-width: none;
+    width: 100%;
   }
 
   .risk-summary-hero {

@@ -1274,6 +1274,56 @@ test("finding review and reopen update the real scan, history, and Markdown work
   assert.doesNotMatch(findingCard("tests/eval_fixture.py").textContent, /Expected scanner regression fixture/);
 });
 
+test("unified finding workbench filters, navigates, reports progress, and reuses review persistence", async () => {
+  const reviewed = reviewableFinding("1", {
+    path: "src/already-reviewed.js",
+    review: findingReview(`cf1_${"1".repeat(64)}`),
+  });
+  const low = reviewableFinding("2", { path: "src/low.js", severity: "low" });
+  const high = reviewableFinding("3", { path: "scripts/setup.ps1", type: "executable-or-script-file" });
+  const medium = reviewableFinding("4", { path: "src/network.js", severity: "medium" });
+
+  await renderApp();
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), {
+    scans: [scanWithFindings(84, [reviewed, low, high, medium])],
+  });
+  await openReports();
+
+  const workbench = document.querySelector(".finding-workbench");
+  assert.ok(workbench, "Expected unified finding workbench");
+  assert.match(workbench.querySelector(".finding-workbench-progress").textContent, /1 \/ 4\s*reviewed/);
+  assert.deepEqual(workbenchPaths(), ["scripts/setup.ps1", "src/network.js", "src/low.js", "src/already-reviewed.js"]);
+  assert.equal(document.querySelector(".category-detail-views").open, false);
+
+  await input(controlWithLabel(workbench, "Review status"), "unresolved");
+  assert.deepEqual(workbenchPaths(), ["scripts/setup.ps1", "src/network.js", "src/low.js"]);
+  await input(controlWithLabel(workbench, "Severity"), "medium");
+  assert.deepEqual(workbenchPaths(), ["src/network.js"]);
+  await input(controlWithLabel(workbench, "Severity"), "all");
+  await input(controlWithLabel(workbench, "Category"), "executable file");
+  assert.deepEqual(workbenchPaths(), ["scripts/setup.ps1"]);
+  await input(controlWithLabel(workbench, "Category"), "all");
+  await input(controlWithLabel(workbench, "Search findings"), "NETWORK.JS");
+  assert.deepEqual(workbenchPaths(), ["src/network.js"]);
+  await input(controlWithLabel(workbench, "Search findings"), "");
+
+  await click([...workbench.querySelectorAll("button")].find((button) => button.textContent === "Next unresolved"));
+  assert.equal(workbench.querySelector(".finding-workbench-item.active code").textContent, "scripts/setup.ps1");
+  await click([...workbench.querySelectorAll("button")].find((button) => button.textContent === "Next unresolved"));
+  assert.equal(workbench.querySelector(".finding-workbench-item.active code").textContent, "src/network.js");
+
+  const highCard = [...workbench.querySelectorAll(".finding")]
+    .find((card) => card.querySelector("code")?.textContent === "scripts/setup.ps1");
+  await click([...highCard.querySelectorAll("button")].find((button) => button.textContent === "Mark reviewed"));
+  await click([...highCard.querySelectorAll("button")].find((button) => button.textContent === "Save review"));
+  const save = await fetchHarness.next("/api/finding-reviews", { method: "PUT" });
+  assert.equal(save.body.fingerprint, high.fingerprint);
+  await respond(save, { review: findingReview(high.fingerprint) });
+
+  assert.match(workbench.querySelector(".finding-workbench-progress").textContent, /2 \/ 4\s*reviewed/);
+  assert.deepEqual(workbenchPaths(), ["src/network.js", "src/low.js"]);
+});
+
 test("failed and stale finding-review saves remain scoped to the exact project finding", async () => {
   const findingA = reviewableFinding("c");
   await renderApp();
@@ -1744,6 +1794,16 @@ function findingCard(path) {
     .find((item) => item.querySelector("code")?.textContent === path);
   assert.ok(card, `Expected finding card for ${path}`);
   return card;
+}
+
+function workbenchPaths() {
+  return [...document.querySelectorAll(".finding-workbench-item code")].map((element) => element.textContent);
+}
+
+function controlWithLabel(scope, labelText) {
+  const label = [...scope.querySelectorAll("label")].find((item) => item.textContent.includes(labelText));
+  assert.ok(label, `Expected ${labelText} control`);
+  return label.querySelector("input, select");
 }
 
 function withCompleteness(value, completeness) {

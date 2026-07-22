@@ -8,6 +8,13 @@ import {
   normalizeDependencyTrust,
 } from "./dependencyTrust.js";
 import { applyFindingReviewToScan, findingReviewLabel, findingReviewSummary } from "./findingReviews.js";
+import {
+  buildFindingWorkbenchItems,
+  filterFindingWorkbenchItems,
+  findingWorkbenchFilterOptions,
+  findingWorkbenchProgress,
+  nextUnresolvedFindingKey,
+} from "./findingWorkbench.js";
 import { shortBaselineFingerprint, trustedBaselineComparisonLabel } from "./trustedDependencyBaseline.js";
 import {
   isAbortError,
@@ -1616,6 +1623,13 @@ function ScanReport({ result, report, comparison, trustContext, viewMode, isScan
         <>
           <ScanSummary report={report} risk={result.overall_risk} />
           <ScanCompletenessSummary completeness={report.completeness} viewMode={viewMode} isScanning={isScanning} onRunScan={onRunScan} />
+          <FindingWorkbench
+            findings={result.findings}
+            scanIdentity={result.id ?? result.scan_date}
+            onReviewFinding={onReviewFinding}
+            onReopenFinding={onReopenFinding}
+            findingReviewState={findingReviewState}
+          />
           <DependencyTrustPanel trust={report.dependencyTrust} findings={report.dependencyFindings} trustContext={trustContext} scan={result} viewMode={viewMode} onReviewFinding={onReviewFinding} onReopenFinding={onReopenFinding} findingReviewState={findingReviewState} trustedBaselineMutation={trustedBaselineMutation} onApproveTrustedBaseline={onApproveTrustedBaseline} onUpdateTrustedBaselineNote={onUpdateTrustedBaselineNote} onClearTrustedBaseline={onClearTrustedBaseline} />
           <div className="scan-view-label">
             {viewMode === "history" ? `Viewing history scan from ${formatDate(result.scan_date)}` : `Viewing latest scan from ${formatDate(result.scan_date)}`}
@@ -1631,14 +1645,17 @@ function ScanReport({ result, report, comparison, trustContext, viewMode, isScan
       ) : null}
       {result && report.totalFindings === 0 && report.completeness.known && report.completeness.complete ? <p className="good">Complete scan with no scanner findings. Still review generated code before running it.</p> : null}
       {result ? (
-        <div className="scan-section-grid">
-          <PathSection title="Manifests" items={report.manifests} emptyText="No manifests recorded for this scan." reviewKind="manifest" guidance={SCAN_GUIDANCE.manifests} />
-          <FindingPathSection title="Lockfiles" items={report.lockfiles} findings={report.lockfileFindings} emptyText="No lockfiles recorded for this scan." guidance={SCAN_GUIDANCE.lockfiles} onReviewFinding={onReviewFinding} onReopenFinding={onReopenFinding} findingReviewState={findingReviewState} />
-          <LifecycleSection items={report.lifecycleScripts} findings={report.lifecycleFindings} onReviewFinding={onReviewFinding} onReopenFinding={onReopenFinding} findingReviewState={findingReviewState} />
-          <FindingSection title="Secret Findings" findings={report.secretFindings} emptyText="No secret-looking paths recorded for this scan." guidance={SCAN_GUIDANCE.secretFiles} onReviewFinding={onReviewFinding} onReopenFinding={onReopenFinding} findingReviewState={findingReviewState} />
-          <FindingSection title="Executable Files" findings={report.executableFindings} emptyText="No executable files recorded for this scan." onReviewFinding={onReviewFinding} onReopenFinding={onReopenFinding} findingReviewState={findingReviewState} />
-          <MetadataSection zone={report.zone} findings={report.metadataFindings} onReviewFinding={onReviewFinding} onReopenFinding={onReopenFinding} findingReviewState={findingReviewState} />
-        </div>
+        <details className="category-detail-views">
+          <summary>Category detail views</summary>
+          <div className="scan-section-grid">
+            <PathSection title="Manifests" items={report.manifests} emptyText="No manifests recorded for this scan." reviewKind="manifest" guidance={SCAN_GUIDANCE.manifests} />
+            <FindingPathSection title="Lockfiles" items={report.lockfiles} findings={report.lockfileFindings} emptyText="No lockfiles recorded for this scan." guidance={SCAN_GUIDANCE.lockfiles} onReviewFinding={onReviewFinding} onReopenFinding={onReopenFinding} findingReviewState={findingReviewState} />
+            <LifecycleSection items={report.lifecycleScripts} findings={report.lifecycleFindings} onReviewFinding={onReviewFinding} onReopenFinding={onReopenFinding} findingReviewState={findingReviewState} />
+            <FindingSection title="Secret Findings" findings={report.secretFindings} emptyText="No secret-looking paths recorded for this scan." guidance={SCAN_GUIDANCE.secretFiles} onReviewFinding={onReviewFinding} onReopenFinding={onReopenFinding} findingReviewState={findingReviewState} />
+            <FindingSection title="Executable Files" findings={report.executableFindings} emptyText="No executable files recorded for this scan." onReviewFinding={onReviewFinding} onReopenFinding={onReopenFinding} findingReviewState={findingReviewState} />
+            <MetadataSection zone={report.zone} findings={report.metadataFindings} onReviewFinding={onReviewFinding} onReopenFinding={onReopenFinding} findingReviewState={findingReviewState} />
+          </div>
+        </details>
       ) : null}
       {result ? <p className="review-note">Review high severity items first, then lifecycle scripts and files that launch processes or fetch remote content.</p> : null}
       </div>
@@ -2142,6 +2159,116 @@ function FindingItem({ finding, onReviewFinding, onReopenFinding, requestState =
         ) : null}
       </div>
     </div>
+  );
+}
+
+
+function FindingWorkbench({ findings = [], scanIdentity, onReviewFinding, onReopenFinding, findingReviewState = {} }) {
+  const [reviewStatus, setReviewStatus] = useState("all");
+  const [severity, setSeverity] = useState("all");
+  const [category, setCategory] = useState("all");
+  const [query, setQuery] = useState("");
+  const [activeKey, setActiveKey] = useState("");
+  const itemRefs = useRef(new Map());
+  const items = useMemo(() => buildFindingWorkbenchItems(findings), [findings]);
+  const visibleItems = useMemo(() => filterFindingWorkbenchItems(items, {
+    reviewStatus,
+    severity,
+    category,
+    query,
+  }), [items, reviewStatus, severity, category, query]);
+  const options = useMemo(() => findingWorkbenchFilterOptions(items), [items]);
+  const progress = useMemo(() => findingWorkbenchProgress(items), [items]);
+  const visibleUnresolvedCount = visibleItems.filter((item) => !item.reviewed).length;
+
+  useEffect(() => {
+    setActiveKey("");
+  }, [scanIdentity]);
+
+  function goToNextUnresolved() {
+    const nextKey = nextUnresolvedFindingKey(visibleItems, activeKey);
+    if (!nextKey) return;
+    setActiveKey(nextKey);
+    requestAnimationFrame(() => {
+      const target = itemRefs.current.get(nextKey);
+      target?.focus({ preventScroll: true });
+      target?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    });
+  }
+
+  return (
+    <section className="finding-workbench" aria-labelledby="finding-workbench-title">
+      <div className="finding-workbench-heading">
+        <div>
+          <h3 id="finding-workbench-title">Unresolved findings</h3>
+          <p>Review findings from this scan in one priority-ordered queue.</p>
+        </div>
+        <div className="finding-workbench-progress" aria-label={`${progress.reviewed} of ${progress.total} findings reviewed`}>
+          <strong>{progress.reviewed} / {progress.total}</strong>
+          <span>reviewed</span>
+          <progress value={progress.reviewed} max={Math.max(progress.total, 1)} />
+        </div>
+      </div>
+
+      <div className="finding-workbench-filters">
+        <label>
+          Review status
+          <select value={reviewStatus} onChange={(event) => setReviewStatus(event.target.value)}>
+            <option value="all">All</option>
+            <option value="unresolved">Unresolved</option>
+            <option value="reviewed">Reviewed</option>
+          </select>
+        </label>
+        <label>
+          Severity
+          <select value={severity} onChange={(event) => setSeverity(event.target.value)}>
+            <option value="all">All</option>
+            {options.severities.map((value) => <option value={value} key={value}>{value}</option>)}
+          </select>
+        </label>
+        <label>
+          Category
+          <select value={category} onChange={(event) => setCategory(event.target.value)}>
+            <option value="all">All</option>
+            {options.categories.map((value) => <option value={value} key={value}>{value}</option>)}
+          </select>
+        </label>
+        <label className="finding-workbench-search">
+          Search findings
+          <input type="search" value={query} onInput={(event) => setQuery(event.target.value)} placeholder="Title or file path" />
+        </label>
+      </div>
+
+      <div className="finding-workbench-actions">
+        <span>{visibleItems.length} visible · {visibleUnresolvedCount} unresolved</span>
+        <button type="button" className="secondary-button compact-action" onClick={goToNextUnresolved} disabled={visibleUnresolvedCount === 0}>Next unresolved</button>
+      </div>
+
+      <div className="finding-workbench-queue">
+        {visibleItems.map((item) => (
+          <div
+            className={`finding-workbench-item${activeKey === item.key ? " active" : ""}`}
+            data-finding-key={item.key}
+            aria-current={activeKey === item.key ? "true" : undefined}
+            key={item.key}
+            ref={(element) => {
+              if (element) itemRefs.current.set(item.key, element);
+              else itemRefs.current.delete(item.key);
+            }}
+            tabIndex="-1"
+          >
+            <FindingItem
+              finding={item.finding}
+              onReviewFinding={onReviewFinding}
+              onReopenFinding={onReopenFinding}
+              requestState={findingReviewState[item.finding.fingerprint]}
+            />
+          </div>
+        ))}
+        {items.length === 0 ? <p className="good">No findings were recorded for this scan.</p> : null}
+        {items.length > 0 && visibleItems.length === 0 ? <p className="muted">No findings match the current filters.</p> : null}
+      </div>
+    </section>
   );
 }
 
