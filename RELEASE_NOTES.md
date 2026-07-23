@@ -1,36 +1,34 @@
-# Glacial 0.4.0 Branding Release
+# Glacial 0.5.0 Guided Review Release
 
-Glacial 0.4.0 introduces the official Glacial application icon and restrained Icefields product branding. The release preserves the application, security, authentication, scanner, packaging, and release behavior established in 0.3.0.
+Glacial 0.5.0 makes the path from registering a project to completing the available review workflow clearer and more evidence-backed. A completed review records what was examined; it does not prove that a project is safe, secure, clean, or fully verified.
 
-## Branding highlights
+## Unified finding review
 
-- Adopted the supplied Glacial artwork as the source for the complete Tauri desktop icon set.
-- Applied the icon to the Windows executable, installed application, Start menu and taskbar surfaces, NSIS installer and uninstaller, and portable executable where supported by Windows and Tauri.
-- Added `Glacial by Icefields` and [icefields.dev](https://icefields.dev) to appropriate UI, package metadata, and project documentation locations.
-- Updated the authoritative application version to 0.4.0.
+- Added one priority-ordered finding-review workbench with review-status, severity, and category filters; title and project-relative-path search; visible progress; and Next unresolved navigation.
+- Preserved persisted finding review and reopen behavior, stable finding identities, historical scans, and the existing category-based detail views.
+- Reduced the prominence of immutable raw-risk metrics after findings are reviewed while keeping scanner context available.
 
-## Preserved security behavior
+## Bounded scanner evidence
 
-- Repository-controlled `.glacialignore` exclusions remain visible, but any excluded file now makes the scan incomplete and unverified rather than allowing a Complete result.
-- Malformed, invalid-UTF-8, non-object, and excessively nested `package.json` inputs now become explicit conservative inspection evidence instead of aborting the scan. Inspection continues for other supported files.
-- Deterministic directory, file, filesystem-entry, inspected-byte, finding, and result-record budgets stop hostile or unusually large scans safely while preserving evidence collected before the stop.
-- Trusted dependency baselines now include sanitized, opaque VCS selector and resolved-revision identity, so revision-only dependency drift is no longer treated as unchanged.
-- Backend API authentication now fails closed when token configuration is missing, empty, or malformed. Missing or incorrect request credentials are rejected.
-- The new root `SECURITY.md` defines hostile repository inputs, the authenticated loopback API boundary, workspace-root assumptions, the non-elevated privilege model, and supported deployment surfaces.
+- Suspicious-text-pattern findings now include the first one-based matching line, deterministic match count, rule identifier, and a short sanitized excerpt.
+- Evidence remains bounded and redacts credential-like values, authorization material, URLs containing credentials, private-key text, and long high-entropy values.
+- Existing secret-designated files never contribute excerpts.
+- The same safe scanner context appears in the Reports workbench and Markdown reports; legacy findings without evidence continue to render normally.
 
-## Compatibility and migration
+## Honest completion and coverage
 
-- Trusted dependency baseline schema 2 includes VCS revision identity. Existing schema-1 baselines cannot prove the stronger identity and must be explicitly recreated or reapproved from a current complete dependency analysis.
-- Scans that use repository-controlled ignore rules now report incomplete coverage. Ignored paths and counts remain available, and legitimate noise suppression remains supported with this conservative completeness result.
-- The supported authenticated full-stack development command is:
+- “Review complete for this scan” appears only when every finding has a review state, scan coverage is known and complete, and any applicable dependency snapshot exactly matches a valid explicitly approved baseline.
+- Incomplete or unavailable coverage, unresolved findings, dependency drift, malformed dependency data, and approval-required dependency snapshots remain visible and keep the workflow incomplete.
+- Current and historical scans receive separate conservative summaries. No completion state claims that Glacial verified project safety.
 
-  ```powershell
-  cd frontend
-  npm.cmd run tauri:dev
-  ```
+## Guided first-project flow
 
-- Direct browser-to-Uvicorn development is unsupported because browser-visible configuration is not an acceptable bearer-token store. Backend-only debugging requires an explicit ephemeral `GLACIAL_DESKTOP_AUTH_TOKEN` and an authenticated client, as documented in the README.
+- Added a compact, dismissible five-step checklist covering project registration, first scan, finding review, coverage understanding, and dependency review when applicable.
+- New or registered projects lead directly toward the first scan, and successful scans lead to the Reports workbench.
+- Checklist dismissal is local UI state only and does not alter project, scan, finding-review, coverage, or dependency data.
 
-## Packaging scope
+## Desktop presentation
 
-Glacial remains a Windows desktop application with a Tauri-supervised loopback backend. Remote and `0.0.0.0` deployments remain unsupported. Windows packaging remains NSIS-only, English-only, with the language selector disabled. The application does not contact `icefields.dev` or any other remote service during normal operation.
+- Refined Projects into compact project entries with a separate selected-project metadata editor.
+- Preserved the Icefields-branded OLED interface, local owned-backend lifecycle, English-only NSIS packaging, and signed installer and portable release semantics.
+- Validated the guided-review and project flows at normal desktop and narrower responsive widths, including empty, unresolved, incomplete, complete, dependency-action, dismissed-checklist, and historical-scan states.

@@ -2,6 +2,17 @@ from __future__ import annotations
 
 CHANGELOG_ENTRIES = [
     {
+        "version": "0.5.0",
+        "title": "Guided finding review",
+        "changes": [
+            "Added a unified finding-review workbench with deterministic prioritization, search, filters, next-unresolved navigation, and persisted review and reopen behavior.",
+            "Added bounded, redacted suspicious-text scanner context to findings, the Reports interface, and Markdown exports without changing finding identity.",
+            "Added conservative review-completion criteria that keep coverage gaps and applicable dependency-baseline approval visible.",
+            "Added a dismissible five-step guided-review checklist, clearer first-project and first-scan flow, and conservative historical-scan summaries.",
+            "Improved responsive desktop and narrow-width layouts while preserving category detail views and existing security boundaries.",
+        ],
+    },
+    {
         "version": "0.4.0",
         "title": "Glacial by Icefields",
         "changes": [
