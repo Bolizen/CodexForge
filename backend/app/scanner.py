@@ -10,6 +10,7 @@ from .dependency_trust import (
     decode_json_object,
     is_dependency_metadata,
 )
+from .finding_evidence import build_suspicious_text_evidence
 from .safety import has_multiple_hardlinks, is_reparse_point_or_symlink
 
 
@@ -38,12 +39,23 @@ SECRET_FILE_NAMES = {
     ".env",
     ".env.local",
     ".env.production",
+    ".envrc",
+    ".flaskenv",
+    ".netrc",
     ".npmrc",
     ".pypirc",
+    "credentials",
+    "credentials.json",
     "id_rsa",
     "id_ed25519",
+    "id_ecdsa",
+    "id_dsa",
+    "secrets.json",
+    "token",
+    "token.json",
+    "tokens.json",
 }
-SECRET_FILE_SUFFIXES = {".pem", ".key"}
+SECRET_FILE_SUFFIXES = {".cer", ".crt", ".der", ".jks", ".key", ".p12", ".pem", ".pfx", ".ppk"}
 EXECUTABLE_EXTENSIONS = {
     ".bat": ("medium", "Batch script found. Review before running because it can execute commands on Windows."),
     ".cmd": ("medium", "Command script found. Review before running because it can execute commands on Windows."),
@@ -553,12 +565,14 @@ def _scan_text_patterns(text: str, relative_path: str) -> list[dict[str, Any]]:
     for pattern, (severity, explanation) in PATTERNS.items():
         needle = pattern.lower()
         if needle in lower_text:
+            evidence = build_suspicious_text_evidence(text, pattern)
             findings.append(_finding(
                 relative_path,
                 "suspicious-text-pattern",
                 severity,
                 f"{explanation} Pattern: {pattern}",
                 pattern=pattern,
+                **({"evidence": evidence} if evidence else {}),
             ))
     return findings
 
@@ -772,7 +786,11 @@ def _has_severity(findings: list[dict[str, str]], severity: str) -> bool:
 
 
 def _is_secret_file(lower_name: str, suffix: str) -> bool:
-    return lower_name in SECRET_FILE_NAMES or suffix in SECRET_FILE_SUFFIXES
+    return (
+        lower_name in SECRET_FILE_NAMES
+        or lower_name.startswith(".env.")
+        or suffix in SECRET_FILE_SUFFIXES
+    )
 
 
 def _is_requirements_manifest(relative_path: str) -> bool:

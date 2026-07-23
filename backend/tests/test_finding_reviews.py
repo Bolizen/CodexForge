@@ -133,6 +133,35 @@ class FindingFingerprintTests(unittest.TestCase):
         second = {**first, "explanation": "Process API. Pattern: child_process"}
         self.assertNotEqual(finding_fingerprint(first), finding_fingerprint(second))
 
+    def test_presentation_evidence_does_not_change_finding_identity(self) -> None:
+        base = {
+            "type": "suspicious-text-pattern",
+            "path": "tests/sample.py",
+            "severity": "high",
+            "pattern": "eval(",
+        }
+        first = {
+            **base,
+            "evidence": {
+                "line": 2,
+                "matchCount": 1,
+                "pattern": "eval(",
+                "excerpt": "result = eval(input)",
+                "additionalMatchesOmitted": False,
+            },
+        }
+        second = {
+            **base,
+            "evidence": {
+                "line": 20,
+                "matchCount": 3,
+                "pattern": "eval(",
+                "excerpt": "value = eval(other)",
+                "additionalMatchesOmitted": True,
+            },
+        }
+        self.assertEqual(finding_fingerprint(first), finding_fingerprint(second))
+
 
 class FindingReviewApiTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -187,6 +216,8 @@ class FindingReviewApiTests(unittest.TestCase):
         finding = next(item for item in scanned["findings"] if item["type"] == "suspicious-text-pattern")
         fingerprint = finding["fingerprint"]
         self.assertIsNone(finding["review"])
+        self.assertEqual(finding["evidence"]["line"], 1)
+        self.assertEqual(finding["evidence"]["matchCount"], 1)
         self.assertEqual(scanned["overall_risk"], "high")
         self.assertEqual(scanned["reviewSummary"]["highestUnreviewedSeverity"], "high")
 
@@ -194,6 +225,7 @@ class FindingReviewApiTests(unittest.TestCase):
             raw = json.loads(connection.execute("SELECT findings_json FROM scans WHERE id = ?", (scanned["id"],)).fetchone()["findings_json"])
         self.assertNotIn("fingerprint", raw[0])
         self.assertNotIn("review", raw[0])
+        self.assertEqual(raw[0]["evidence"], finding["evidence"])
 
         created = main.update_finding_review(FindingReviewRequest(
             project_path=str(self.project), fingerprint=fingerprint, status="expected", note="Known regression fixture.",
@@ -213,6 +245,7 @@ class FindingReviewApiTests(unittest.TestCase):
         self.assertEqual(history["reviewSummary"]["reviewedFindingCount"], 1)
         self.assertEqual(history["reviewSummary"]["highestUnreviewedSeverity"], "none")
         self.assertEqual(history["findings"][0]["review"]["note"], "Reviewed again.")
+        self.assertEqual(history["findings"][0]["evidence"], finding["evidence"])
 
         repeated = self.scan_pattern(self.project)
         repeated_finding = next(item for item in repeated["findings"] if item["fingerprint"] == fingerprint)
@@ -298,9 +331,41 @@ class FindingReviewApiTests(unittest.TestCase):
         history = main.scan_history(str(self.project))["scans"][0]
         self.assertRegex(history["findings"][0]["fingerprint"], r"^cf1_[0-9a-f]{64}$")
         self.assertIsNone(history["findings"][0]["review"])
+        self.assertNotIn("evidence", history["findings"][0])
         with database.get_connection() as connection:
             stored = json.loads(connection.execute("SELECT findings_json FROM scans WHERE scan_date = 'legacy'").fetchone()["findings_json"])
         self.assertEqual(stored, [legacy_finding])
+
+    def test_malformed_historical_evidence_is_omitted_without_rewriting_storage(self) -> None:
+        malformed = {
+            "path": "legacy.py",
+            "type": "suspicious-text-pattern",
+            "severity": "high",
+            "explanation": "Legacy malformed evidence. Pattern: eval(",
+            "evidence": {
+                "line": 1,
+                "matchCount": 2,
+                "pattern": "eval(",
+                "excerpt": "eval(input)",
+                "additionalMatchesOmitted": False,
+            },
+        }
+        with database.get_connection() as connection:
+            connection.execute(
+                "INSERT INTO scans (project_path, scan_date, overall_risk, findings_json) VALUES (?, ?, ?, ?)",
+                (str(self.project), "malformed", "high", json.dumps([malformed])),
+            )
+
+        history = main.scan_history(str(self.project))["scans"][0]
+
+        self.assertNotIn("evidence", history["findings"][0])
+        with database.get_connection() as connection:
+            stored = json.loads(
+                connection.execute(
+                    "SELECT findings_json FROM scans WHERE scan_date = 'malformed'"
+                ).fetchone()["findings_json"]
+            )
+        self.assertEqual(stored, [malformed])
 
 
 if __name__ == "__main__":

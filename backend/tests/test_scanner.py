@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from app import scanner
+from app.finding_evidence import SUSPICIOUS_TEXT_MAX_EXCERPT_CHARS, SUSPICIOUS_TEXT_MAX_LINE_CHARS
 from app.scanner import scan_project
 
 
@@ -214,6 +215,114 @@ class ScannerLinkedPathTests(unittest.TestCase):
         ))
         self.assertNotIn("payload.txt", result["ignoredFiles"])
         self.assertIn("payload.txt", result["reviewedFiles"])
+
+
+class ScannerSuspiciousTextEvidenceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary_directory = tempfile.TemporaryDirectory(
+            dir=Path(__file__).resolve().parent
+        )
+        self.project_path = Path(self.temporary_directory.name) / "project"
+        self.project_path.mkdir()
+        self.addCleanup(self.temporary_directory.cleanup)
+
+    def suspicious_finding(self, result: dict[str, object], path: str) -> dict[str, object]:
+        return next(
+            finding
+            for finding in result["findings"]
+            if finding["type"] == "suspicious-text-pattern"
+            and finding["path"] == path
+            and finding["pattern"] == "eval("
+        )
+
+    def test_evidence_uses_one_based_line_and_counts_all_matches(self) -> None:
+        (self.project_path / "sample.js").write_text(
+            "const before = true;\n"
+            "const input = readValue();\n"
+            "const first = eval(input);\n"
+            "const after = true;\n"
+            "const gap = true;\n"
+            "const second = eval(otherInput);\n",
+            encoding="utf-8",
+        )
+
+        evidence = self.suspicious_finding(
+            scan_project(self.project_path),
+            "sample.js",
+        )["evidence"]
+
+        self.assertEqual(evidence["line"], 3)
+        self.assertEqual(evidence["matchCount"], 2)
+        self.assertEqual(evidence["pattern"], "eval(")
+        self.assertTrue(evidence["additionalMatchesOmitted"])
+        self.assertIn("const first = eval(input);", evidence["excerpt"])
+        self.assertNotIn("const second", evidence["excerpt"])
+        self.assertEqual(len(evidence["excerpt"].splitlines()), 3)
+
+    def test_excerpt_bounds_are_small_deterministic_and_match_centered(self) -> None:
+        content = f"{'a' * 500}eval(input){'b' * 500}\n"
+        (self.project_path / "long.js").write_text(content, encoding="utf-8")
+
+        first = self.suspicious_finding(scan_project(self.project_path), "long.js")["evidence"]
+        second = self.suspicious_finding(scan_project(self.project_path), "long.js")["evidence"]
+
+        self.assertEqual(first, second)
+        self.assertLessEqual(len(first["excerpt"]), SUSPICIOUS_TEXT_MAX_EXCERPT_CHARS)
+        self.assertTrue(all(
+            len(line) <= SUSPICIOUS_TEXT_MAX_LINE_CHARS
+            for line in first["excerpt"].splitlines()
+        ))
+        self.assertIn("eval(input)", first["excerpt"])
+        self.assertTrue(first["excerpt"].startswith("\u2026"))
+        self.assertTrue(first["excerpt"].endswith("\u2026"))
+
+    def test_excerpt_redacts_representative_credential_like_values(self) -> None:
+        (self.project_path / "redaction.js").write_text(
+            '"Authorization": "Bearer example-access-token"\n'
+            'const output = eval(payload); const config = {"password": "not-a-real-password"}; '
+            'const opaque = "ExampleHighEntropyValue_0123456789_ABCDEF";\n'
+            "const endpoint = 'https://demo:not-a-real-password@example.invalid/path'; "
+            "-----BEGIN PRIVATE KEY----- not-real-material\n",
+            encoding="utf-8",
+        )
+
+        excerpt = self.suspicious_finding(
+            scan_project(self.project_path),
+            "redaction.js",
+        )["evidence"]["excerpt"]
+
+        self.assertNotIn("example-access-token", excerpt)
+        self.assertNotIn("not-a-real-password", excerpt)
+        self.assertNotIn("ExampleHighEntropyValue", excerpt)
+        self.assertNotIn("BEGIN PRIVATE KEY", excerpt)
+        self.assertIn('"Authorization": [REDACTED]', excerpt)
+        self.assertIn('"password": [REDACTED]', excerpt)
+        self.assertIn("https://[REDACTED]@example.invalid", excerpt)
+        self.assertIn("eval(payload)", excerpt)
+
+    def test_secret_designated_files_never_receive_text_evidence(self) -> None:
+        secret_paths = [
+            ".env.example",
+            ".envrc",
+            ".flaskenv",
+            "credentials.json",
+            "identity.der",
+            "identity.pfx",
+        ]
+        for name in secret_paths:
+            (self.project_path / name).write_text(
+                "eval(secret_value)\n",
+                encoding="utf-8",
+            )
+
+        result = scan_project(self.project_path)
+
+        self.assertTrue(set(secret_paths).issubset(result["secretFiles"]))
+        self.assertFalse(any(
+            finding["type"] == "suspicious-text-pattern"
+            and finding["path"] in secret_paths
+            for finding in result["findings"]
+        ))
 
 
 class ScannerCompletenessTests(unittest.TestCase):

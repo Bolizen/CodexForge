@@ -91,6 +91,8 @@ const FINDING_STANDARD_FIELDS = new Set([
 ]);
 
 const SEVERITY_ORDER = { high: 0, medium: 1, low: 2, none: 3 };
+const SUSPICIOUS_TEXT_MAX_EVIDENCE_EXCERPT_CHARS = 482;
+const SUSPICIOUS_TEXT_MAX_PATTERN_CHARS = 120;
 
 export function normalizeScanCompleteness(result) {
   const value = result?.scanCompleteness;
@@ -146,6 +148,7 @@ export function normalizeFinding(finding = {}) {
       || presentText(finding.recommended_action)
       || mapped.action
       || "Review this item before running, sharing, or committing the project.",
+    evidence: normalizeSuspiciousTextEvidence(finding, type, path),
   };
 }
 
@@ -398,7 +401,24 @@ function formatFindings(findings) {
     appendOptionalListItem(lines, "Review status", escapeMarkdownText(findingReviewLabel(finding.review)));
     if (finding.review?.note) appendOptionalListItem(lines, "Review reason", escapeMarkdownText(finding.review.note));
 
-    const metadata = findingMetadata(finding);
+    if (detail.evidence) {
+      lines.push(
+        "- Scanner context: Context only; not proof of malicious behavior.",
+        `  - Location: ${inlineCode(`${detail.path}:${detail.evidence.line}`)}`,
+        `  - Rule/pattern: ${inlineCode(detail.evidence.pattern)}`,
+        `  - Match count: ${detail.evidence.matchCount}`,
+      );
+      if (detail.evidence.additionalMatchesOmitted) {
+        lines.push("  - Additional matches were omitted from this bounded excerpt.");
+      }
+      lines.push("", ...formatCodeBlock(detail.evidence.excerpt));
+    }
+
+    const excludedMetadata = new Set(
+      type === "suspicious-text-pattern" ? ["evidence"] : [],
+    );
+    if (detail.evidence) excludedMetadata.add("pattern");
+    const metadata = findingMetadata(finding, excludedMetadata);
     if (metadata.length) {
       lines.push("- Metadata:");
       metadata.forEach(([key, value]) => {
@@ -409,12 +429,66 @@ function formatFindings(findings) {
   }).join("\n\n");
 }
 
-function findingMetadata(finding) {
+function findingMetadata(finding, excludedKeys = new Set()) {
   return Object.keys(finding || {})
-    .filter((key) => !FINDING_STANDARD_FIELDS.has(key) && !isInternalMetadataKey(key))
+    .filter((key) => (
+      !FINDING_STANDARD_FIELDS.has(key)
+      && !excludedKeys.has(key)
+      && !isInternalMetadataKey(key)
+    ))
     .sort((left, right) => left.localeCompare(right))
     .map((key) => [key, serializeMetadata(finding[key])])
     .filter(([, value]) => value);
+}
+
+function normalizeSuspiciousTextEvidence(finding, type, path) {
+  if (type !== "suspicious-text-pattern" || !isSafeProjectRelativePath(path)) return null;
+  const value = finding?.evidence;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+
+  const line = value.line;
+  const matchCount = value.matchCount;
+  const pattern = typeof value.pattern === "string" ? value.pattern : "";
+  const excerpt = typeof value.excerpt === "string"
+    ? value.excerpt.replaceAll("\r\n", "\n").replaceAll("\r", "\n")
+    : "";
+  const omitted = value.additionalMatchesOmitted;
+  if (typeof finding.pattern !== "string" || finding.pattern !== pattern) return null;
+  if (!Number.isInteger(line) || line < 1) return null;
+  if (!Number.isInteger(matchCount) || matchCount < 1) return null;
+  if (!pattern || pattern.length > SUSPICIOUS_TEXT_MAX_PATTERN_CHARS || /[\u0000-\u001f]/u.test(pattern)) {
+    return null;
+  }
+  if (!excerpt || excerpt.length > SUSPICIOUS_TEXT_MAX_EVIDENCE_EXCERPT_CHARS || excerpt.includes("\0")) {
+    return null;
+  }
+  const excerptLines = excerpt.split("\n");
+  if (excerptLines.length > 3 || excerptLines.some((item) => item.length > 160)) return null;
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(excerpt)) return null;
+  if (typeof omitted !== "boolean" || omitted !== (matchCount > 1)) return null;
+  return {
+    line,
+    matchCount,
+    pattern,
+    excerpt,
+    additionalMatchesOmitted: omitted,
+  };
+}
+
+function isSafeProjectRelativePath(value) {
+  if (!value || value === "Unknown path" || value.includes("\0")) return false;
+  const normalized = value.replaceAll("\\", "/");
+  if (normalized.startsWith("/") || /^[A-Za-z]:/u.test(normalized)) return false;
+  return normalized.split("/").every((segment) => segment && segment !== "." && segment !== "..");
+}
+
+function formatCodeBlock(value) {
+  const longestFence = Math.max(
+    0,
+    ...Array.from(value.matchAll(/`+/gu), (match) => match[0].length),
+  );
+  const fence = "`".repeat(Math.max(3, longestFence + 1));
+  return [fence, value, fence];
 }
 
 function serializeMetadata(value) {

@@ -1288,7 +1288,17 @@ test("unified finding workbench filters, navigates, reports progress, and reuses
   });
   const low = reviewableFinding("2", { path: "src/low.js", severity: "low" });
   const high = reviewableFinding("3", { path: "scripts/setup.ps1", type: "executable-or-script-file" });
-  const medium = reviewableFinding("4", { path: "src/network.js", severity: "medium" });
+  const medium = reviewableFinding("4", {
+    path: "src/network.js",
+    severity: "medium",
+    evidence: {
+      line: 12,
+      matchCount: 2,
+      pattern: "eval(",
+      excerpt: "const result = eval(networkInput);",
+      additionalMatchesOmitted: true,
+    },
+  });
 
   await renderApp();
   await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), {
@@ -1301,6 +1311,14 @@ test("unified finding workbench filters, navigates, reports progress, and reuses
   assert.match(workbench.querySelector(".finding-workbench-progress").textContent, /1 \/ 4\s*reviewed/);
   assert.deepEqual(workbenchPaths(), ["scripts/setup.ps1", "src/network.js", "src/low.js", "src/already-reviewed.js"]);
   assert.equal(document.querySelector(".category-detail-views").open, false);
+  const evidence = findingCard("src/network.js").querySelector(".finding-evidence");
+  assert.ok(evidence, "Expected bounded scanner context in the workbench");
+  assert.match(evidence.textContent, /Context only; not proof of malicious behavior/);
+  assert.match(evidence.textContent, /Line 12/);
+  assert.match(evidence.textContent, /Rule\/pattern eval\(/);
+  assert.match(evidence.textContent, /2 matches/);
+  assert.match(evidence.textContent, /Additional matches omitted/);
+  assert.match(evidence.textContent, /const result = eval\(networkInput\);/);
 
   await input(controlWithLabel(workbench, "Review status"), "unresolved");
   assert.deepEqual(workbenchPaths(), ["scripts/setup.ps1", "src/network.js", "src/low.js"]);
@@ -1798,13 +1816,14 @@ function scanWithFindings(id, findings) {
 
 function findingCard(path) {
   const card = [...document.querySelectorAll(".finding")]
-    .find((item) => item.querySelector("code")?.textContent === path);
+    .find((item) => item.querySelector(".finding-heading > code")?.textContent === path);
   assert.ok(card, `Expected finding card for ${path}`);
   return card;
 }
 
 function workbenchPaths() {
-  return [...document.querySelectorAll(".finding-workbench-item code")].map((element) => element.textContent);
+  return [...document.querySelectorAll(".finding-workbench-item .finding-heading > code")]
+    .map((element) => element.textContent);
 }
 
 function controlWithLabel(scope, labelText) {

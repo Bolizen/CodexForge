@@ -2130,6 +2130,18 @@ function FindingItem({ finding, onReviewFinding, onReopenFinding, requestState =
         <p><strong>Why:</strong> {detail.why}</p>
         <p><strong>Action:</strong> {detail.action}</p>
         {rawExplanation ? <p><strong>Raw detail:</strong> {rawExplanation}</p> : null}
+        {detail.evidence ? (
+          <div className="finding-evidence">
+            <p><strong>Scanner context</strong> Context only; not proof of malicious behavior.</p>
+            <div className="finding-evidence-meta">
+              <span>Line {detail.evidence.line}</span>
+              <span>Rule/pattern <code>{detail.evidence.pattern}</code></span>
+              {detail.evidence.matchCount > 1 ? <span>{detail.evidence.matchCount} matches</span> : null}
+              {detail.evidence.additionalMatchesOmitted ? <span>Additional matches omitted</span> : null}
+            </div>
+            <pre><code>{detail.evidence.excerpt}</code></pre>
+          </div>
+        ) : null}
         {finding.review?.note ? <p className="finding-review-note"><strong>Review reason:</strong> {finding.review.note}</p> : null}
         {reviewable ? (
           <div className="finding-review-controls">

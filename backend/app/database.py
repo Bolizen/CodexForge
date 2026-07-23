@@ -6,6 +6,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from .finding_evidence import normalize_suspicious_text_evidence
+
 
 DESKTOP_DATA_DIR_ENV = "GLACIAL_DESKTOP_DATA_DIR"
 REPOSITORY_DB_DIR = Path(__file__).resolve().parent.parent / "data"
@@ -197,6 +199,16 @@ def _normalize_finding(finding: dict[str, Any]) -> dict[str, Any]:
         "severity": finding.get("severity") or "low",
         "explanation": finding.get("explanation") or "Review this finding manually.",
     })
+    if normalized["type"] == "suspicious-text-pattern":
+        normalized.pop("evidence", None)
+        evidence = normalize_suspicious_text_evidence(finding.get("evidence"))
+        finding_pattern = finding.get("pattern")
+        if (
+            evidence
+            and isinstance(finding_pattern, str)
+            and evidence["pattern"] == finding_pattern
+        ):
+            normalized["evidence"] = evidence
     return normalized
 
 

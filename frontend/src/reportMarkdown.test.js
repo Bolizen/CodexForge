@@ -13,7 +13,16 @@ const FINDINGS = [
     "suspicious-text-pattern",
     "src/[loader]*`test`.js",
     "Review *carefully* [before] using `eval`.",
-    { pattern: "eval(", match_count: 2 },
+    {
+      pattern: "eval(",
+      evidence: {
+        line: 7,
+        matchCount: 2,
+        pattern: "eval(",
+        excerpt: "const result = eval(userInput);",
+        additionalMatchesOmitted: true,
+      },
+    },
   ),
   finding("symlink-or-reparse-point", "linked/config", "Linked-path explanation."),
   finding("hardlink", "shared/tool.exe", "Hardlink explanation."),
@@ -52,8 +61,12 @@ test("exports every current and future finding with complete detailed evidence",
   assert.match(markdown, /- Category: filesystem entry inspection error/);
   assert.match(markdown, /- Category: future scanner signal/);
   assert.match(markdown, /- Metadata:/);
-  assert.match(markdown, /- Match count: `2`/);
-  assert.match(markdown, /- Pattern: `eval\(`/);
+  assert.match(markdown, /- Scanner context: Context only; not proof of malicious behavior\./);
+  assert.match(markdown, /- Location: .*src\/\[loader\].*:7/);
+  assert.match(markdown, /- Rule\/pattern: `eval\(`/);
+  assert.match(markdown, /- Match count: 2/);
+  assert.match(markdown, /Additional matches were omitted/);
+  assert.match(markdown, /const result = eval\(userInput\);/);
   assert.match(markdown, /- Evidence: `\{"matches":3,"source":"future_scanner"\}`/);
 
   for (const heading of [
@@ -114,6 +127,41 @@ test("unknown findings with missing optional fields remain visible without empty
   assert.match(markdown, /- Details: `\{"count":0,"enabled":false,"tags":\["one",0,false\]\}`/);
   assert.doesNotMatch(markdown, /undefined|null/);
   assert.doesNotMatch(markdown, /\[object Object\]/);
+});
+
+test("legacy and malformed suspicious-text evidence are omitted conservatively", () => {
+  const legacy = finding(
+    "suspicious-text-pattern",
+    "src/legacy.js",
+    "Legacy finding. Pattern: eval(",
+    { pattern: "eval(" },
+  );
+  const malformed = finding(
+    "suspicious-text-pattern",
+    "src/malformed.js",
+    "Malformed evidence. Pattern: eval(",
+    {
+      pattern: "eval(",
+      evidence: {
+        line: 3,
+        matchCount: 2,
+        pattern: "eval(",
+        excerpt: "eval(input)",
+        additionalMatchesOmitted: false,
+      },
+    },
+  );
+
+  const markdown = buildScanReportMarkdown(
+    scanResult([legacy, malformed]),
+    reportFixture(),
+    null,
+    { configured: false },
+  );
+
+  assert.equal(markdown.match(/Scanner context:/g), null);
+  assert.doesNotMatch(markdown, /eval\(input\)/);
+  assert.equal(markdown.match(/- Pattern: `eval\(`/g)?.length, 2);
 });
 
 test("review status preserves raw evidence and separates unresolved risk", () => {
