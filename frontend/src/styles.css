@@ -491,6 +491,9 @@ pre {
 }
 
 .expectations-safety-note p,
+.project-drift-heading p,
+.project-drift-section header p,
+.project-drift-message,
 .expectation-field-heading p,
 .expectation-suggestions p,
 .expectation-reliability,
@@ -502,6 +505,165 @@ pre {
   font-size: 0.86rem;
   line-height: 1.5;
   margin: var(--space-1) 0 0;
+}
+
+.project-drift-summary {
+  background: var(--color-surface-inset);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: var(--space-4);
+}
+
+.project-drift-heading,
+.project-drift-section header {
+  align-items: flex-start;
+  display: flex;
+  gap: var(--space-3);
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.project-drift-heading > div,
+.project-drift-section header > div {
+  min-width: 0;
+}
+
+.project-drift-heading h3,
+.project-drift-section h4 {
+  margin: 0;
+}
+
+.project-drift-heading h3 {
+  font-size: 1rem;
+}
+
+.project-drift-section h4 {
+  font-size: 0.9rem;
+}
+
+.drift-overall-state,
+.project-drift-section header > span {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-secondary);
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 4px 7px;
+}
+
+.project-drift-section.drift-state-drift header > span,
+.drift-overall-state.drift-state-drift {
+  background: var(--color-warning-soft);
+  border-color: rgba(230, 179, 90, 0.36);
+  color: var(--color-warning);
+}
+
+.project-drift-section.drift-state-unchanged header > span,
+.drift-overall-state.drift-state-unchanged {
+  background: var(--color-success-soft);
+  border-color: rgba(114, 199, 125, 0.34);
+  color: var(--color-success);
+}
+
+.project-drift-sections {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.project-drift-section {
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: var(--space-3);
+}
+
+.project-drift-message {
+  margin: 0;
+}
+
+.project-drift-counts {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.project-drift-count {
+  background: var(--color-surface-inset);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: var(--space-2);
+  text-align: center;
+}
+
+.project-drift-count strong {
+  color: var(--color-text-primary);
+  font-size: 0.95rem;
+}
+
+.project-drift-count > span {
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+  overflow-wrap: anywhere;
+}
+
+.project-drift-details,
+.project-drift-category {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.project-drift-category {
+  border-top: 1px solid var(--color-border-subtle);
+  padding-top: var(--space-2);
+}
+
+.project-drift-category > strong {
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+}
+
+.project-drift-category > small {
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+}
+
+.project-drift-category > span {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.project-drift-category em {
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  font-style: normal;
+  text-transform: uppercase;
+}
+
+.project-drift-category code {
+  color: var(--color-text-primary);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.project-drift-category b {
+  color: var(--color-text-muted);
+  font-weight: 400;
 }
 
 .expectation-field-list {
@@ -3862,6 +4024,8 @@ label,
   }
 
   .project-expectations-heading,
+  .project-drift-heading,
+  .project-drift-section header,
   .expectation-field-heading,
   .expectation-changed-note {
     align-items: stretch;
@@ -3874,9 +4038,16 @@ label,
   }
 
   .expectation-columns,
+  .project-drift-sections,
   .approved-dependency-separation,
   .expectation-review-context {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .project-drift-counts {
+    grid-template-columns: repeat(5, minmax(52px, 1fr));
+    overflow-x: auto;
+    padding-bottom: 2px;
   }
 
   .expectation-review-context > div,

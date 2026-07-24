@@ -105,7 +105,9 @@ class ScanCompletenessPersistenceTests(unittest.TestCase):
             project = main.list_projects()["projects"][0]
 
         self.assertEqual(current["scanCompleteness"], scan_result["scanCompleteness"])
+        self.assertTrue(current["scanMetadataReliable"])
         self.assertEqual(history[0]["scanCompleteness"], scan_result["scanCompleteness"])
+        self.assertTrue(history[0]["scanMetadataReliable"])
         self.assertEqual(history[0]["findings"][0]["action"], "Inspect it manually.")
         self.assertEqual(history[0]["findings"][0]["operation"], "traverse-directory")
         self.assertEqual(history[0]["findings"][1]["budget"], "files")
@@ -129,7 +131,35 @@ class ScanCompletenessPersistenceTests(unittest.TestCase):
             project = main.list_projects()["projects"][0]
 
         self.assertIsNone(scan["scanCompleteness"])
+        self.assertFalse(scan["scanMetadataReliable"])
         self.assertIsNone(project["last_scan_completeness"])
+
+    def test_malformed_persisted_metadata_is_marked_unreliable(self) -> None:
+        metadata = {
+            "manifests": "package.json",
+            "lockfiles": [],
+            "lifecycleScripts": [],
+            "ignoredFiles": [],
+            "reviewedFiles": [],
+            "scanCompleteness": {"complete": True},
+        }
+        with database.get_connection() as connection:
+            connection.execute(
+                "INSERT INTO scans (project_path, scan_date, overall_risk, findings_json, scan_metadata_json) VALUES (?, ?, ?, ?, ?)",
+                (
+                    str(self.project_path),
+                    "2026-01-02T00:00:00+00:00",
+                    "none",
+                    json.dumps([]),
+                    json.dumps(metadata),
+                ),
+            )
+
+        with patch.object(main, "_ensure_project", return_value=self.project_path):
+            scan = main.scan_history(str(self.project_path))["scans"][0]
+
+        self.assertEqual(scan["manifests"], [])
+        self.assertFalse(scan["scanMetadataReliable"])
 
     def test_legacy_complete_scan_with_ignored_files_is_reclassified(self) -> None:
         legacy_result = {

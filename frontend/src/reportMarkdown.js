@@ -152,7 +152,7 @@ export function normalizeFinding(finding = {}) {
   };
 }
 
-export function buildScanReportMarkdown(result, report, comparison, trustContext) {
+export function buildScanReportMarkdown(result, report, comparison, trustContext, projectDrift) {
   const findings = Array.isArray(result?.findings) ? [...result.findings].sort(compareFindings) : [];
   const completeness = normalizeScanCompleteness(result);
   const reviewSummary = findingReviewSummary(result);
@@ -226,6 +226,9 @@ export function buildScanReportMarkdown(result, report, comparison, trustContext
     "",
     formatZone(report?.zone, completeness),
     "",
+    "## Project Drift Summary",
+    formatProjectDriftMarkdown(projectDrift),
+    "",
     "## Project Expectations Context",
     formatMarkdownTrustContext(trustContext),
     "",
@@ -233,6 +236,66 @@ export function buildScanReportMarkdown(result, report, comparison, trustContext
     formatMarkdownComparison(comparison),
     "",
   ].join("\n");
+}
+
+function formatProjectDriftMarkdown(summary) {
+  if (!summary?.scanToScan || !summary?.expectations) {
+    return "Drift summary unavailable for this report. Glacial cannot conclude that drift is absent.";
+  }
+  return [
+    "Drift is project metadata context, not automatically a security finding.",
+    "",
+    "### Scan-to-scan drift",
+    formatProjectDriftSection(summary.scanToScan, false),
+    "",
+    "### Expectation drift",
+    "Approved expectations remain distinct from observations and suggestions.",
+    "",
+    formatProjectDriftSection(summary.expectations, true),
+  ].join("\n");
+}
+
+function formatProjectDriftSection(section, expectation) {
+  const lines = [
+    `Status: ${projectDriftStatusLabel(section.status)}`,
+    "",
+    escapeMarkdownText(section.message || "Drift details are unavailable."),
+    "",
+    `- ${expectation ? "Matching approved values" : "Unchanged values"}: ${numberOrZero(section.counts?.unchanged)}`,
+    `- ${expectation ? "New unapproved observations" : "Added observations"}: ${numberOrZero(section.counts?.added)}`,
+    `- ${expectation ? "Approved values not observed" : "Removed observations"}: ${numberOrZero(section.counts?.removed)}`,
+    `- ${expectation ? "Different approved/observed values" : "Changed observations"}: ${numberOrZero(section.counts?.changed)}`,
+    `- Unavailable categories: ${numberOrZero(section.counts?.unavailable)}`,
+  ];
+  const changedCategories = Array.isArray(section.categories)
+    ? section.categories.filter((category) => category?.status === "changed")
+    : [];
+  for (const category of changedCategories) {
+    lines.push("", `#### ${escapeMarkdownText(category.label)}`);
+    for (const change of category.changed || []) {
+      const beforeLabel = expectation ? "Approved" : "Previous";
+      const afterLabel = expectation ? "Observed" : "Current";
+      lines.push(`- ${beforeLabel}: ${inlineCode(change.before)} → ${afterLabel}: ${inlineCode(change.after)}`);
+    }
+    for (const value of category.added || []) {
+      lines.push(`- ${expectation ? "New observation (not approved)" : "Added"}: ${inlineCode(value)}`);
+    }
+    for (const value of category.removed || []) {
+      lines.push(`- ${expectation ? "Approved but not observed" : "Removed"}: ${inlineCode(value)}`);
+    }
+    if (numberOrZero(category.omittedDetailCount) > 0) {
+      lines.push(`- ${category.omittedDetailCount} additional changed values omitted from this bounded report section.`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function projectDriftStatusLabel(status) {
+  if (status === "drift") return "Drift observed";
+  if (status === "unchanged") return "Unchanged";
+  if (status === "no-baseline") return "No suitable previous baseline";
+  if (status === "unconfigured") return "No approved expectation values";
+  return "Indeterminate";
 }
 
 function formatTrustedDependencyBaseline(baseline) {

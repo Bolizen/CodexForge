@@ -102,6 +102,53 @@ test("restores a valid project, section, historical scan, and panel state once",
   assert.equal(fetchHarness.count("/api/notes"), 1);
 });
 
+test("Project Expectations drift summary survives navigation and saved-section restoration", async () => {
+  storeSession({
+    selectedProjectPath: PROJECT_A_PATH,
+    activeSection: "trustProfiles",
+  });
+  const current = withCompleteness({
+    ...scan(24, "low", "2026-07-12T12:00:00Z"),
+    manifests: ["pyproject.toml"],
+    dependencyTrust: dependencyTrustFixture(),
+    scanMetadataReliable: true,
+  }, { complete: true });
+  const previous = withCompleteness({
+    ...scan(23, "low", "2026-07-11T12:00:00Z"),
+    manifests: ["package.json"],
+    dependencyTrust: dependencyTrustFixture(),
+    scanMetadataReliable: true,
+  }, { complete: true });
+
+  await renderApp();
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), {
+    scans: [current, previous],
+    trustProfile: {
+      project_path: PROJECT_A_PATH,
+      expectedManifestFiles: ["package.json"],
+    },
+  });
+
+  assert.equal(document.querySelector(".topbar h1").textContent, "Project Expectations");
+  const drift = document.querySelector(".project-drift-summary");
+  assert.ok(drift);
+  assert.match(drift.textContent, /Scan-to-scan drift/);
+  assert.match(drift.textContent, /Expectation drift/);
+  assert.match(drift.textContent, /package\.json/);
+  assert.match(drift.textContent, /pyproject\.toml/);
+
+  for (const section of ["Reports", "Projects", "Settings", "Project Expectations"]) {
+    const link = [...document.querySelectorAll(".sidebar-nav a")]
+      .find((item) => item.textContent.includes(section));
+    assert.ok(link, `Expected ${section} navigation link`);
+    await click(link);
+    assert.equal(document.querySelector(".topbar h1").textContent, section);
+  }
+
+  assert.equal(parseStoredSession().activeSection, "trustProfiles");
+  assert.ok(document.querySelector(".project-drift-summary"));
+});
+
 test("missing and unavailable stored projects fall back through normal selection", async () => {
   storeSession({ selectedProjectPath: "C:/workspace/missing", activeSection: "reports" });
   await renderApp();

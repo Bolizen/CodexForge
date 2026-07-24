@@ -12,6 +12,7 @@ import {
   dependencyStatusDescription,
   dependencyStatusLabel,
 } from "./dependencyTrust.js";
+import { buildProjectDriftSummary } from "./projectDrift.js";
 
 const STATE_LABELS = {
   observed: "Observed",
@@ -25,6 +26,7 @@ export function ProjectExpectationsPanel({
   profile,
   report,
   scan,
+  scans,
   message,
   onSave,
   onOpenReports,
@@ -33,6 +35,10 @@ export function ProjectExpectationsPanel({
   const model = useMemo(
     () => buildProjectExpectationsViewModel({ profile: normalizedProfile, report, scan }),
     [normalizedProfile, report, scan],
+  );
+  const drift = useMemo(
+    () => buildProjectDriftSummary({ scans, profile: normalizedProfile }),
+    [scans, normalizedProfile],
   );
   const [editingField, setEditingField] = useState("");
   const [fieldDraft, setFieldDraft] = useState("");
@@ -120,6 +126,8 @@ export function ProjectExpectationsPanel({
           changes coverage, or establishes that this project is safe.
         </p>
       </div>
+
+      <ProjectDriftSummary summary={drift} />
 
       <div className="expectation-field-list">
         {model.fields.map((field) => (
@@ -276,6 +284,126 @@ export function ProjectExpectationsPanel({
       ) : null}
     </section>
   );
+}
+
+function ProjectDriftSummary({ summary }) {
+  return (
+    <section className="project-drift-summary" aria-labelledby="project-drift-title">
+      <div className="project-drift-heading">
+        <div>
+          <h3 id="project-drift-title">Project drift summary</h3>
+          <p>Information about observed metadata changes. Drift is not automatically a security finding.</p>
+        </div>
+        <span className={`drift-overall-state drift-state-${combinedDriftStatus(summary)}`}>
+          {combinedDriftLabel(summary)}
+        </span>
+      </div>
+      <div className="project-drift-sections">
+        <DriftSection
+          title="Scan-to-scan drift"
+          description="Latest complete, reliable scan compared with the preceding complete, reliable baseline."
+          section={summary.scanToScan}
+          expectation={false}
+        />
+        <DriftSection
+          title="Expectation drift"
+          description="Latest complete, reliable observations compared with user-approved Project Expectations."
+          section={summary.expectations}
+          expectation
+        />
+      </div>
+    </section>
+  );
+}
+
+function DriftSection({ title, description, section, expectation }) {
+  const changedCategories = section.categories.filter((category) => category.status === "changed");
+  return (
+    <article className={`project-drift-section drift-state-${section.status}`}>
+      <header>
+        <div>
+          <h4>{title}</h4>
+          <p>{description}</p>
+        </div>
+        <span>{driftStatusLabel(section.status)}</span>
+      </header>
+      <p className="project-drift-message">{section.message}</p>
+      <div className="project-drift-counts" aria-label={`${title} counts`}>
+        <DriftCount label={expectation ? "Matching" : "Unchanged"} value={section.counts.unchanged} tone="unchanged" />
+        <DriftCount label={expectation ? "New" : "Added"} value={section.counts.added} tone="added" />
+        <DriftCount label={expectation ? "Missing" : "Removed"} value={section.counts.removed} tone="removed" />
+        <DriftCount label={expectation ? "Different" : "Changed"} value={section.counts.changed} tone="changed" />
+        <DriftCount label="Unavailable" value={section.counts.unavailable} tone="unavailable" />
+      </div>
+      {changedCategories.length > 0 ? (
+        <div className="project-drift-details">
+          {changedCategories.map((category) => (
+            <div className="project-drift-category" key={category.field}>
+              <strong>{category.label}</strong>
+              {category.changed.map((change) => (
+                <span key={`${change.before}-${change.after}`}>
+                  <em>{expectation ? "Approved" : "Previous"}</em>
+                  <code>{change.before}</code>
+                  <b aria-hidden="true">→</b>
+                  <em>{expectation ? "Observed" : "Current"}</em>
+                  <code>{change.after}</code>
+                </span>
+              ))}
+              {category.added.map((value) => (
+                <span key={`added-${value}`}>
+                  <em>{expectation ? "New observation" : "Added"}</em>
+                  <code>{value}</code>
+                </span>
+              ))}
+              {category.removed.map((value) => (
+                <span key={`removed-${value}`}>
+                  <em>{expectation ? "Approved, not observed" : "Removed"}</em>
+                  <code>{value}</code>
+                </span>
+              ))}
+              {category.omittedDetailCount > 0 ? (
+                <small>{category.omittedDetailCount} additional changed values omitted from this bounded view.</small>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function DriftCount({ label, value, tone }) {
+  return (
+    <span className={`project-drift-count drift-count-${tone}`}>
+      <strong>{value}</strong>
+      <span>{label}</span>
+    </span>
+  );
+}
+
+function combinedDriftStatus(summary) {
+  if (summary.scanToScan.status === "indeterminate" || summary.expectations.status === "indeterminate") {
+    return "indeterminate";
+  }
+  if (summary.scanToScan.status === "drift" || summary.expectations.status === "drift") return "drift";
+  if (summary.scanToScan.status === "no-baseline" || summary.expectations.status === "unconfigured") return "context";
+  return "unchanged";
+}
+
+function combinedDriftLabel(summary) {
+  const status = combinedDriftStatus(summary);
+  if (status === "indeterminate") return "Indeterminate";
+  if (status === "drift") return "Drift observed";
+  if (status === "unchanged") return "Unchanged";
+  return "Baseline needed";
+}
+
+function driftStatusLabel(status) {
+  if (status === "drift") return "Drift observed";
+  if (status === "unchanged") return "Unchanged";
+  if (status === "no-baseline") return "No baseline";
+  if (status === "unconfigured") return "No approvals";
+  return "Indeterminate";
 }
 
 function ExpectationValueGroup({ title, empty, children }) {

@@ -1,6 +1,14 @@
-# Glacial 0.5.0 Guided Review Release
+# Glacial 0.6.2 Project Drift Summary
 
-Glacial 0.5.0 makes the path from registering a project to completing the available review workflow clearer and more evidence-backed. A completed review records what was examined; it does not prove that a project is safe, secure, clean, or fully verified.
+Glacial 0.6.2 explains how the latest complete, reliable project observations differ from both the preceding complete, reliable scan and the user’s approved Project Expectations. Drift remains review context; it is not automatically a security finding.
+
+## Project drift summary
+
+- Added separate scan-to-scan and expectation-drift summaries across the seven metadata categories already represented by Project Expectations.
+- Shows unchanged, added or new, removed or missing, and changed or different values with compact counts and specific values.
+- Withholds no-drift claims when current coverage, historical baselines, persisted metadata, or dependency analysis is unavailable, malformed, incomplete, or otherwise unreliable.
+- Keeps approved expectations, raw observations, and inert suggestions distinct. No drift calculation approves, dismisses, overwrites, or mutates Project Expectations.
+- Includes the same distinctions and conservative states in Markdown reports without creating or changing findings.
 
 ## Unified finding review
 

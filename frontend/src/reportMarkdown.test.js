@@ -80,6 +80,7 @@ test("exports every current and future finding with complete detailed evidence",
     "Ignored files",
     "Reviewed files",
     "Zone",
+    "Project Drift Summary",
     "Project Expectations Context",
     "Comparison with previous scan",
   ]) {
@@ -88,6 +89,56 @@ test("exports every current and future finding with complete detailed evidence",
   assert.match(markdown, /Project: `Z:\\workspace\\project`/);
   assert.match(markdown, /- Approved package managers: npm/);
   assert.match(markdown, /- Risk: LOW to HIGH/);
+});
+
+test("project drift Markdown keeps observations, approved expectations, and drift distinct", () => {
+  const counts = { unchanged: 1, added: 0, removed: 0, changed: 1, unavailable: 0 };
+  const markdown = buildScanReportMarkdown(
+    scanResult([]),
+    reportFixture({ totalFindings: 0 }),
+    null,
+    trustContextFixture(),
+    {
+      scanToScan: {
+        status: "drift",
+        message: "Observed project metadata changed from the previous complete, reliable scan.",
+        counts,
+        categories: [{
+          field: "expectedManifestFiles",
+          label: "Dependency manifests",
+          status: "changed",
+          unchanged: [],
+          added: [],
+          removed: [],
+          changed: [{ before: "package.json", after: "pyproject.toml" }],
+          omittedDetailCount: 2,
+        }],
+      },
+      expectations: {
+        status: "drift",
+        message: "Reliable observations differ from approved Project Expectations. Approved values were not changed.",
+        counts,
+        categories: [{
+          field: "expectedManifestFiles",
+          label: "Dependency manifests",
+          status: "changed",
+          unchanged: [],
+          added: [],
+          removed: [],
+          changed: [{ before: "package.json", after: "pyproject.toml" }],
+        }],
+      },
+    },
+  );
+
+  assert.match(markdown, /^## Project Drift Summary$/m);
+  assert.match(markdown, /^### Scan-to-scan drift$/m);
+  assert.match(markdown, /Previous: `package\.json` → Current: `pyproject\.toml`/);
+  assert.match(markdown, /^### Expectation drift$/m);
+  assert.match(markdown, /Approved expectations remain distinct from observations and suggestions/);
+  assert.match(markdown, /Approved: `package\.json` → Observed: `pyproject\.toml`/);
+  assert.match(markdown, /2 additional changed values omitted from this bounded report section/);
+  assert.doesNotMatch(markdown, /Finding .*Project drift/i);
 });
 
 test("unknown findings with missing optional fields remain visible without empty placeholders", () => {

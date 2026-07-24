@@ -183,6 +183,7 @@ def row_to_scan(row: sqlite3.Row) -> dict[str, Any]:
         "reviewedFiles": _metadata_list(metadata, "reviewedFiles"),
         "zone": str(metadata.get("zone") or "Unknown"),
         "scanCompleteness": _scan_completeness(metadata),
+        "scanMetadataReliable": _scan_metadata_reliable(metadata),
         "dependencyTrust": _dependency_trust(metadata),
     }
 
@@ -296,6 +297,24 @@ def _scan_completeness(metadata: dict[str, Any]) -> dict[str, Any] | None:
 def _dependency_trust(metadata: dict[str, Any]) -> dict[str, Any] | None:
     value = metadata.get("dependencyTrust")
     return value if isinstance(value, dict) else None
+
+
+def _scan_metadata_reliable(metadata: dict[str, Any]) -> bool:
+    string_list_fields = ("manifests", "lockfiles", "ignoredFiles", "reviewedFiles")
+    if any(
+        not isinstance(metadata.get(field), list)
+        or any(not isinstance(item, str) for item in metadata[field])
+        for field in string_list_fields
+    ):
+        return False
+
+    lifecycle_scripts = metadata.get("lifecycleScripts")
+    return isinstance(lifecycle_scripts, list) and all(
+        isinstance(item, dict)
+        and isinstance(item.get("path"), str)
+        and isinstance(item.get("script"), str)
+        for item in lifecycle_scripts
+    )
 
 
 def _summarize_findings(findings: list[dict[str, str]]) -> dict[str, int]:

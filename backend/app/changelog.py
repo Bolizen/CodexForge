@@ -2,6 +2,16 @@ from __future__ import annotations
 
 CHANGELOG_ENTRIES = [
     {
+        "version": "0.6.2",
+        "title": "Project drift summary",
+        "changes": [
+            "Added a conservative scan-to-scan summary across the existing Project Expectations metadata categories.",
+            "Added a separate comparison between reliable observations and user-approved Project Expectations without changing approvals or dismissed suggestions.",
+            "Included the same observed-versus-approved distinction and indeterminate states in Markdown scan reports.",
+            "Preserved findings, raw risk, review state, coverage, dependency approval, and review-completion behavior.",
+        ],
+    },
+    {
         "version": "0.5.0",
         "title": "Guided finding review",
         "changes": [

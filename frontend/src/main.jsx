@@ -25,6 +25,7 @@ import {
   EMPTY_PROJECT_EXPECTATIONS,
   normalizeProjectExpectations,
 } from "./projectExpectations.js";
+import { buildProjectDriftSummary } from "./projectDrift.js";
 import { shortBaselineFingerprint, trustedBaselineComparisonLabel } from "./trustedDependencyBaseline.js";
 import {
   isAbortError,
@@ -152,9 +153,19 @@ export function App() {
   const displayedReport = useMemo(() => buildScanReport(displayedScan), [displayedScan]);
   const displayedComparison = useMemo(() => buildScanComparisonFor(displayedScan, scanHistory), [displayedScan, scanHistory]);
   const displayedTrustContext = useMemo(() => buildTrustProfileContext(displayedReport, trustProfile), [displayedReport, trustProfile]);
+  const displayedProjectDrift = useMemo(
+    () => buildProjectDriftSummary({ scans: scanHistory, profile: trustProfile, currentScanId: displayedScan?.id }),
+    [scanHistory, trustProfile, displayedScan?.id],
+  );
   const displayedReportMarkdown = useMemo(
-    () => (displayedScan ? buildScanReportMarkdown(displayedScan, displayedReport, displayedComparison, displayedTrustContext) : ""),
-    [displayedScan, displayedReport, displayedComparison, displayedTrustContext],
+    () => (displayedScan ? buildScanReportMarkdown(
+      displayedScan,
+      displayedReport,
+      displayedComparison,
+      displayedTrustContext,
+      displayedProjectDrift,
+    ) : ""),
+    [displayedScan, displayedReport, displayedComparison, displayedTrustContext, displayedProjectDrift],
   );
   const latestProjectScan = scanResult || scanHistory[0] || null;
   const latestProjectReport = useMemo(() => buildScanReport(latestProjectScan), [latestProjectScan]);
@@ -1134,8 +1145,9 @@ export function App() {
           {selectedSection === "trustProfiles" && selectedProject && !projectDetailsLoading ? (
             <ProjectExpectationsPanel
               profile={trustProfile}
-              report={displayedReport}
-              scan={displayedScan}
+              report={latestProjectReport}
+              scan={latestProjectScan}
+              scans={scanHistory}
               message={trustProfileMessage}
               onSave={saveTrustProfile}
               onOpenReports={openReports}

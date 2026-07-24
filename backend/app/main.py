@@ -384,6 +384,7 @@ def run_scan(payload: ProjectPathRequest) -> dict[str, object]:
         "reviewedFileCount": result["reviewedFileCount"],
         "zone": result["zone"],
         "scanCompleteness": result["scanCompleteness"],
+        "scanMetadataReliable": True,
         "dependencyTrust": result.get("dependencyTrust"),
     }
     response = enrich_scan(response, _finding_reviews(str(project)))
