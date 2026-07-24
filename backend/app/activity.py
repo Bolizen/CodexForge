@@ -14,11 +14,17 @@ EVENT_PROJECT_EXPECTATIONS_UPDATED = "project_expectations_updated"
 EVENT_OBSERVED_DRIFT_ADOPTED = "observed_drift_adopted"
 EVENT_FINDING_REVIEW_COMPLETED = "finding_review_completed"
 EVENT_DEPENDENCY_REVIEW_COMPLETED = "dependency_review_completed"
+EVENT_TRUSTED_SCAN_BASELINE_SET = "trusted_scan_baseline_set"
+EVENT_TRUSTED_SCAN_BASELINE_REPLACED = "trusted_scan_baseline_replaced"
+EVENT_TRUSTED_SCAN_BASELINE_CLEARED = "trusted_scan_baseline_cleared"
 KNOWN_STORED_EVENT_TYPES = {
     EVENT_PROJECT_EXPECTATIONS_UPDATED,
     EVENT_OBSERVED_DRIFT_ADOPTED,
     EVENT_FINDING_REVIEW_COMPLETED,
     EVENT_DEPENDENCY_REVIEW_COMPLETED,
+    EVENT_TRUSTED_SCAN_BASELINE_SET,
+    EVENT_TRUSTED_SCAN_BASELINE_REPLACED,
+    EVENT_TRUSTED_SCAN_BASELINE_CLEARED,
 }
 MAX_ACTIVITY_PAGE_SIZE = 50
 MAX_ACTIVITY_OFFSET = 1000
@@ -265,6 +271,30 @@ def _load_details(value: object, event_type: str) -> tuple[dict[str, object], bo
         if status != "approved":
             return {}, True
         return {"status": status}, False
+    if event_type in {
+        EVENT_TRUSTED_SCAN_BASELINE_SET,
+        EVENT_TRUSTED_SCAN_BASELINE_REPLACED,
+        EVENT_TRUSTED_SCAN_BASELINE_CLEARED,
+    }:
+        prior_id = bounded.get("priorBaselineScanId")
+        new_id = bounded.get("newBaselineScanId")
+        prior_date = bounded.get("priorBaselineScanDate")
+        new_date = bounded.get("newBaselineScanDate")
+        if prior_id is not None and (not isinstance(prior_id, int) or prior_id <= 0):
+            return {}, True
+        if new_id is not None and (not isinstance(new_id, int) or new_id <= 0):
+            return {}, True
+        details: dict[str, object] = {}
+        if prior_id:
+            details["priorBaselineScanId"] = prior_id
+        if new_id:
+            details["newBaselineScanId"] = new_id
+        if isinstance(prior_date, str) and prior_date:
+            details["priorBaselineScanDate"] = prior_date
+        if isinstance(new_date, str) and new_date:
+            details["newBaselineScanDate"] = new_date
+        required_id = prior_id if event_type == EVENT_TRUSTED_SCAN_BASELINE_CLEARED else new_id
+        return (details, False) if required_id else ({}, True)
     return {}, True
 
 

@@ -24,7 +24,7 @@ const CATEGORY_SOURCES = {
 };
 const MAX_DRIFT_DETAILS_PER_CATEGORY = 10;
 
-export function buildProjectDriftSummary({ scans, profile, currentScanId } = {}) {
+export function buildProjectDriftSummary({ scans, profile, currentScanId, trustedBaseline } = {}) {
   const orderedScans = Array.isArray(scans) ? scans : [];
   const currentIndex = currentScanId === undefined || currentScanId === null
     ? 0
@@ -40,6 +40,7 @@ export function buildProjectDriftSummary({ scans, profile, currentScanId } = {})
         "indeterminate",
         "No scan is available, so scan-to-scan drift cannot be determined.",
       ),
+      baselineSource: { type: "no-baseline", scan: null },
       expectations: unavailableSection(
         "indeterminate",
         "No scan is available, so approved expectations cannot be compared with observations.",
@@ -48,11 +49,20 @@ export function buildProjectDriftSummary({ scans, profile, currentScanId } = {})
   }
 
   const expectations = buildExpectationDrift(current, normalizedProfile);
+  if (trustedBaseline?.configured === true) {
+    return {
+      currentScan: scanIdentity(currentScan),
+      scanToScan: trustedBaselineComparison(currentScan, trustedBaseline),
+      expectations,
+      baselineSource: trustedBaselineSource(trustedBaseline),
+    };
+  }
   if (!current.reliable) {
     return {
       currentScan: scanIdentity(currentScan),
       scanToScan: unavailableSection("indeterminate", current.reason),
       expectations,
+      baselineSource: { type: "no-baseline", scan: null },
     };
   }
 
@@ -67,6 +77,7 @@ export function buildProjectDriftSummary({ scans, profile, currentScanId } = {})
       currentScan: scanIdentity(currentScan),
       scanToScan: unavailableSection("no-baseline", message),
       expectations,
+      baselineSource: { type: "no-baseline", scan: null },
     };
   }
 
@@ -95,6 +106,7 @@ export function buildProjectDriftSummary({ scans, profile, currentScanId } = {})
       categories,
     },
     expectations,
+    baselineSource: { type: "automatic", scan: scanIdentity(baselineScan) },
   };
 }
 
@@ -119,6 +131,61 @@ export function compareProjectMetadataScans(baseScan, targetScan) {
     message: "Observed project metadata is comparable across both selected scans.",
     counts,
     categories,
+  };
+}
+
+function trustedBaselineComparison(currentScan, trustedBaseline) {
+  if (
+    trustedBaseline.status !== "valid"
+    || !trustedBaseline.baseline
+    || !trustedBaseline.baseline.scan
+  ) {
+    return unavailableSection(
+      "trusted-baseline-unavailable",
+      trustedBaseline.message
+        || "Trusted baseline unavailable. No automatic baseline was substituted.",
+    );
+  }
+  const baselineScan = trustedBaseline.baseline.scan;
+  if (baselineScan.id === currentScan.id) {
+    return {
+      ...unavailableSection(
+        "baseline-is-latest",
+        "Baseline is the latest scan. A scan is never compared against itself.",
+      ),
+      baselineScan: scanIdentity(baselineScan),
+    };
+  }
+  const comparison = compareProjectMetadataScans(baselineScan, currentScan);
+  if (comparison.status !== "comparable") {
+    return {
+      ...comparison,
+      status: "indeterminate",
+      baselineScan: scanIdentity(baselineScan),
+      message: `Trusted baseline comparison is indeterminate. ${comparison.message}`,
+    };
+  }
+  const driftDetected = comparison.counts.added
+    + comparison.counts.removed
+    + comparison.counts.changed > 0;
+  return {
+    ...comparison,
+    status: driftDetected ? "drift" : "unchanged",
+    baselineScan: scanIdentity(baselineScan),
+    message: driftDetected
+      ? "Observed project metadata changed from the exact trusted baseline."
+      : "Observed project metadata matches the exact trusted baseline.",
+  };
+}
+
+function trustedBaselineSource(value) {
+  const scanId = value?.baseline?.scanId;
+  const scanDate = value?.baseline?.scanDate;
+  return {
+    type: value?.status === "valid" ? "trusted" : "trusted-unavailable",
+    scan: Number.isSafeInteger(scanId) && scanId > 0
+      ? { id: scanId, date: typeof scanDate === "string" ? scanDate : "" }
+      : null,
   };
 }
 

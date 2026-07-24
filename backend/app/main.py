@@ -15,6 +15,9 @@ from .activity import (
     EVENT_FINDING_REVIEW_COMPLETED,
     EVENT_OBSERVED_DRIFT_ADOPTED,
     EVENT_PROJECT_EXPECTATIONS_UPDATED,
+    EVENT_TRUSTED_SCAN_BASELINE_CLEARED,
+    EVENT_TRUSTED_SCAN_BASELINE_REPLACED,
+    EVENT_TRUSTED_SCAN_BASELINE_SET,
     MAX_ACTIVITY_OFFSET,
     MAX_ACTIVITY_PAGE_SIZE,
     activity_page,
@@ -44,9 +47,11 @@ from .scan_comparison import (
     MAX_COMPARISON_OPTIONS_PAGE,
     compare_scan_rows,
     comparison_options_page,
+    trusted_scan_eligibility,
 )
-from .schemas import AgentPreviewRequest, FindingReviewDelete, FindingReviewRequest, NoteCreate, ProjectCreate, ProjectMetadataUpdate, ProjectPathRequest, ProjectRegister, ProjectRootUpdate, TrustProfileRequest, TrustedDependencyBaselineApprove, TrustedDependencyBaselineNote
+from .schemas import AgentPreviewRequest, FindingReviewDelete, FindingReviewRequest, NoteCreate, ProjectCreate, ProjectMetadataUpdate, ProjectPathRequest, ProjectRegister, ProjectRootUpdate, TrustProfileRequest, TrustedDependencyBaselineApprove, TrustedDependencyBaselineNote, TrustedScanBaselineSet
 from .trusted_dependency_baseline import BASELINE_SCHEMA_VERSION, BaselineError, approval_for_analysis, enrich_scan as enrich_trusted_baseline, public_baseline, snapshot_from_analysis, snapshot_json, valid_fingerprint as valid_baseline_fingerprint
+from .trusted_scan_baseline import PROVENANCE_MANUAL, trusted_scan_baseline_state
 
 
 app = FastAPI(title="Glacial API")
@@ -264,6 +269,7 @@ def unregister_project(payload: ProjectPathRequest) -> dict[str, object]:
         row = connection.execute("SELECT name FROM projects WHERE path = ?", (path,)).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="Project registration was not found.")
+        connection.execute("DELETE FROM trusted_scan_baselines WHERE project_id = ?", (path,))
         connection.execute("DELETE FROM scans WHERE project_path = ?", (path,))
         connection.execute("DELETE FROM notes WHERE project_path = ?", (path,))
         connection.execute("DELETE FROM project_trust_profiles WHERE project_path = ?", (path,))
@@ -479,6 +485,125 @@ def project_activity(
             limit=limit,
             offset=offset,
         )
+
+
+@app.get("/api/trusted-scan-baseline")
+def get_trusted_scan_baseline(
+    project_path: str = Query(min_length=1, max_length=1000),
+) -> dict[str, object]:
+    project = _ensure_project(project_path)
+    with get_connection() as connection:
+        return trusted_scan_baseline_state(connection, project_id=str(project))
+
+
+@app.put("/api/trusted-scan-baseline")
+def set_trusted_scan_baseline(payload: TrustedScanBaselineSet) -> dict[str, object]:
+    project = _ensure_project(payload.project_path)
+    with get_connection() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        scan_row = connection.execute(
+            "SELECT * FROM scans WHERE id = ?",
+            (payload.scan_id,),
+        ).fetchone()
+        if not scan_row:
+            raise HTTPException(status_code=404, detail="The selected scan was not found.")
+        if scan_row["project_path"] != str(project):
+            raise HTTPException(status_code=403, detail="The selected scan belongs to another project.")
+        eligibility = trusted_scan_eligibility(scan_row)
+        if eligibility["eligible"] is not True:
+            raise HTTPException(
+                status_code=409,
+                detail=f"The selected scan is not eligible as a trusted baseline. {eligibility['reason']}",
+            )
+
+        existing = connection.execute(
+            "SELECT project_id, scan_id, pinned_at FROM trusted_scan_baselines WHERE project_id = ?",
+            (str(project),),
+        ).fetchone()
+        if existing and existing["scan_id"] == payload.scan_id:
+            state = trusted_scan_baseline_state(connection, project_id=str(project))
+            return {**state, "activity_recorded": False, "changed": False}
+        if existing and not payload.replace:
+            raise HTTPException(
+                status_code=409,
+                detail="A trusted scan baseline already exists. Confirm replacement to continue.",
+            )
+
+        prior_scan = None
+        if existing:
+            prior_scan = connection.execute(
+                "SELECT id, scan_date FROM scans WHERE id = ? AND project_path = ?",
+                (existing["scan_id"], str(project)),
+            ).fetchone()
+        now = _now()
+        connection.execute(
+            "INSERT INTO trusted_scan_baselines (project_id, scan_id, pinned_at, provenance) "
+            "VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(project_id) DO UPDATE SET "
+            "scan_id = excluded.scan_id, pinned_at = excluded.pinned_at, provenance = excluded.provenance",
+            (str(project), payload.scan_id, now, PROVENANCE_MANUAL),
+        )
+        event_type = (
+            EVENT_TRUSTED_SCAN_BASELINE_REPLACED
+            if existing
+            else EVENT_TRUSTED_SCAN_BASELINE_SET
+        )
+        details: dict[str, object] = {
+            "newBaselineScanId": payload.scan_id,
+            "newBaselineScanDate": str(scan_row["scan_date"] or "")[:100],
+        }
+        if existing:
+            details["priorBaselineScanId"] = int(existing["scan_id"])
+            if prior_scan:
+                details["priorBaselineScanDate"] = str(prior_scan["scan_date"] or "")[:100]
+        append_activity_event(
+            connection,
+            project_id=str(project),
+            event_type=event_type,
+            occurred_at=now,
+            related_scan_id=payload.scan_id,
+            details=details,
+        )
+        state = trusted_scan_baseline_state(connection, project_id=str(project))
+    return {**state, "activity_recorded": True, "changed": True}
+
+
+@app.delete("/api/trusted-scan-baseline")
+def clear_trusted_scan_baseline(payload: ProjectPathRequest) -> dict[str, object]:
+    project = _ensure_project(payload.project_path)
+    with get_connection() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        existing = connection.execute(
+            "SELECT project_id, scan_id, pinned_at FROM trusted_scan_baselines WHERE project_id = ?",
+            (str(project),),
+        ).fetchone()
+        if not existing:
+            state = trusted_scan_baseline_state(connection, project_id=str(project))
+            return {**state, "activity_recorded": False, "changed": False}
+        prior_scan = connection.execute(
+            "SELECT id, scan_date FROM scans WHERE id = ? AND project_path = ?",
+            (existing["scan_id"], str(project)),
+        ).fetchone()
+        connection.execute(
+            "DELETE FROM trusted_scan_baselines WHERE project_id = ?",
+            (str(project),),
+        )
+        now = _now()
+        details: dict[str, object] = {
+            "priorBaselineScanId": int(existing["scan_id"]),
+        }
+        if prior_scan:
+            details["priorBaselineScanDate"] = str(prior_scan["scan_date"] or "")[:100]
+        append_activity_event(
+            connection,
+            project_id=str(project),
+            event_type=EVENT_TRUSTED_SCAN_BASELINE_CLEARED,
+            occurred_at=now,
+            related_scan_id=int(existing["scan_id"]),
+            details=details,
+        )
+        state = trusted_scan_baseline_state(connection, project_id=str(project))
+    return {**state, "activity_recorded": True, "changed": True}
 
 
 @app.get("/api/trusted-dependency-baseline")

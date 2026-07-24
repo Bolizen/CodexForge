@@ -111,6 +111,15 @@ def init_db() -> None:
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS trusted_scan_baselines (
+                project_id TEXT PRIMARY KEY,
+                scan_id INTEGER NOT NULL,
+                pinned_at TEXT NOT NULL,
+                provenance TEXT NOT NULL DEFAULT 'manual'
+                    CHECK (provenance IN ('manual')),
+                FOREIGN KEY (scan_id) REFERENCES scans(id)
+            );
+
             CREATE TABLE IF NOT EXISTS project_activity_events (
                 event_id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,

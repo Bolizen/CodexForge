@@ -15,6 +15,9 @@ const EVENT_TITLES = {
   observed_drift_adopted: "Observed drift adopted",
   finding_review_completed: "Finding review completed",
   dependency_review_completed: "Dependency review completed",
+  trusted_scan_baseline_set: "Trusted baseline set",
+  trusted_scan_baseline_replaced: "Trusted baseline replaced",
+  trusted_scan_baseline_cleared: "Trusted baseline cleared",
 };
 
 export function normalizeActivityPage(value) {
@@ -68,6 +71,15 @@ export function activityDetail(event) {
     return details.status === "approved"
       ? "The current dependency snapshot was explicitly approved."
       : "Dependency review state changed.";
+  }
+  if (event.eventType === "trusted_scan_baseline_set") {
+    return `Scan #${details.newBaselineScanId} is now the trusted comparison baseline${dateSuffix(details.newBaselineScanDate)}.`;
+  }
+  if (event.eventType === "trusted_scan_baseline_replaced") {
+    return `Trusted comparison baseline changed from scan #${details.priorBaselineScanId} to scan #${details.newBaselineScanId}${dateSuffix(details.newBaselineScanDate)}.`;
+  }
+  if (event.eventType === "trusted_scan_baseline_cleared") {
+    return `Trusted comparison baseline scan #${details.priorBaselineScanId} was cleared.`;
   }
   return "Stored activity details are unavailable. The underlying project data was not changed.";
 }
@@ -139,6 +151,11 @@ function validDate(value) {
 function countLabel(value, noun) {
   const count = Number.isSafeInteger(value) && value >= 0 ? value : 0;
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+function dateSuffix(value) {
+  const date = validDate(value);
+  return date ? ` (${new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(date)})` : "";
 }
 
 function boundedText(value, limit) {

@@ -1,6 +1,17 @@
-# Glacial 0.6.5 Explicit Scan Comparison
+# Glacial 0.6.6 Trusted Scan Baseline Management
 
-Glacial 0.6.5 adds a bounded, read-only workflow for comparing two explicitly selected scans from the same project.
+Glacial 0.6.6 adds a deliberate project-level reference for comparing the latest scan with one exact, reliable trusted scan.
+
+## Trusted scan baseline management
+
+- Lets users explicitly set, atomically replace, or clear one trusted scan baseline per project after reviewing a compact confirmation preview.
+- Accepts only project-owned scans with complete and internally consistent coverage, structurally reliable persisted metadata, and supported complete dependency metadata.
+- Stores only the project ID, scan ID, pinned UTC timestamp, and bounded manual provenance; scan contents remain in their original scan row.
+- Gives a valid trusted reference precedence over automatic baseline selection in Project Expectations and reports an invalid or unavailable reference without silently falling back.
+- Treats a baseline that is also the latest scan as a neutral state and never describes self-comparison as unchanged.
+- Preselects the trusted scan as the base and latest scan as the target in the existing read-only Scan Comparison view.
+- Records only successful set, replacement, and clear activity events in the same transaction as the baseline change.
+- Does not alter scans, findings, review decisions, severity, raw risk, Project Expectations, dependency approval, coverage, provenance, or project trust state.
 
 ## Explicit scan comparison
 

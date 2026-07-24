@@ -2,6 +2,16 @@ from __future__ import annotations
 
 CHANGELOG_ENTRIES = [
     {
+        "version": "0.6.6",
+        "title": "Trusted scan baseline management",
+        "changes": [
+            "Added one deliberate project-level trusted scan reference for complete, structurally reliable scans.",
+            "Added explicit set, atomic replacement, and clear workflows with compact confirmation previews and bounded activity events.",
+            "Made the exact trusted scan take precedence in Project Expectations without silently substituting an automatic baseline when the reference is invalid or unavailable.",
+            "Integrated read-only latest-to-trusted comparison preselection while preserving scans, findings, reviews, expectations, dependency approval, coverage, and trust state.",
+        ],
+    },
+    {
         "version": "0.6.5",
         "title": "Explicit scan comparison",
         "changes": [

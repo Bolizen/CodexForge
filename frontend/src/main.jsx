@@ -44,6 +44,13 @@ import {
 } from "./scanComparison.js";
 import { shortBaselineFingerprint, trustedBaselineComparisonLabel } from "./trustedDependencyBaseline.js";
 import {
+  EMPTY_TRUSTED_SCAN_BASELINE,
+  normalizeTrustedScanBaseline,
+  trustedBaselinePreview,
+  trustedComparisonSelection,
+  trustedScanEligibility,
+} from "./trustedScanBaseline.js";
+import {
   isAbortError,
   projectListResponsePolicy,
   requestIsCurrent,
@@ -118,6 +125,9 @@ export function App() {
   const [trustProfileMessage, setTrustProfileMessage] = useState("");
   const [activity, setActivity] = useState(EMPTY_ACTIVITY_STATE);
   const [scanComparison, setScanComparison] = useState(EMPTY_SCAN_COMPARISON);
+  const [trustedScanBaseline, setTrustedScanBaseline] = useState(EMPTY_TRUSTED_SCAN_BASELINE);
+  const [trustedScanBaselineMutation, setTrustedScanBaselineMutation] = useState({ saving: false, error: "", success: "" });
+  const [trustedScanBaselinePreview, setTrustedScanBaselinePreview] = useState(null);
   const [notes, setNotes] = useState([]);
   const [noteBody, setNoteBody] = useState("");
   const [changelog, setChangelog] = useState([]);
@@ -160,6 +170,8 @@ export function App() {
     activity: 0,
     comparisonOptions: 0,
     scanComparison: 0,
+    trustedScanBaseline: 0,
+    trustedScanBaselineMutation: 0,
     agentsExists: 0,
     scanMutation: 0,
     noteMutation: 0,
@@ -235,6 +247,7 @@ export function App() {
       loadTrustProfile(selectedPath, generation, controller.signal),
       loadActivity(selectedPath, generation, controller.signal),
       loadComparisonOptions(selectedPath, generation, controller.signal),
+      loadTrustedScanBaseline(selectedPath, generation, controller.signal),
       checkAgentsExists(selectedPath, generation, controller.signal),
     ]).then(() => {
       if (!controller.signal.aborted && projectRequestIsCurrent(selectedPath, generation)) {
@@ -308,6 +321,9 @@ export function App() {
     setTrustProfileMessage("");
     setActivity(EMPTY_ACTIVITY_STATE);
     setScanComparison(EMPTY_SCAN_COMPARISON);
+    setTrustedScanBaseline(EMPTY_TRUSTED_SCAN_BASELINE);
+    setTrustedScanBaselineMutation({ saving: false, error: "", success: "" });
+    setTrustedScanBaselinePreview(null);
     setNotes([]);
     setNoteBody("");
     setCopyStatus("");
@@ -636,6 +652,7 @@ export function App() {
       if (projectRequestIsCurrent(projectPath, generation)) {
         await loadActivity(projectPath, generation);
         await loadComparisonOptions(projectPath, generation);
+        await loadTrustedScanBaseline(projectPath, generation);
       }
       if (workspaceGenerationRef.current === workspaceGeneration) {
         await refreshProjects(projectPath, generation);
@@ -868,6 +885,109 @@ export function App() {
         setScanComparison((current) => ({ ...current, loading: false, error: error.message }));
       }
     }
+  }
+
+  async function loadTrustedScanBaseline(path, generation, signal) {
+    const requestId = beginScopedProjectRequest("trustedScanBaseline");
+    try {
+      const data = await api(
+        `/api/trusted-scan-baseline?project_path=${encodeURIComponent(path)}`,
+        { signal },
+      );
+      if (!scopedProjectRequestIsCurrent("trustedScanBaseline", requestId, path, generation)) return;
+      setTrustedScanBaseline(normalizeTrustedScanBaseline(data));
+    } catch (error) {
+      if (!isAbortError(error) && scopedProjectRequestIsCurrent("trustedScanBaseline", requestId, path, generation)) {
+        setTrustedScanBaseline({
+          ...EMPTY_TRUSTED_SCAN_BASELINE,
+          status: "unavailable",
+          message: error.message,
+        });
+      }
+    }
+  }
+
+  function requestTrustedScanBaseline(scan) {
+    const preview = trustedBaselinePreview(selectedProject, scan, trustedScanBaseline);
+    if (!preview.eligibility.eligible) {
+      setTrustedScanBaselineMutation({ saving: false, error: preview.eligibility.reason, success: "" });
+      return;
+    }
+    if (trustedScanBaseline.baseline?.scanId === scan.id) return;
+    setTrustedScanBaselinePreview({ type: "set", scan, preview });
+    setTrustedScanBaselineMutation((current) => ({ ...current, error: "", success: "" }));
+  }
+
+  function requestClearTrustedScanBaseline() {
+    if (!trustedScanBaseline.configured || !trustedScanBaseline.baseline) return;
+    setTrustedScanBaselinePreview({
+      type: "clear",
+      baseline: trustedScanBaseline.baseline,
+      projectName: selectedProject?.name || "Selected project",
+    });
+    setTrustedScanBaselineMutation((current) => ({ ...current, error: "", success: "" }));
+  }
+
+  async function confirmTrustedScanBaselineMutation() {
+    const preview = trustedScanBaselinePreview;
+    const projectPath = selectedPathRef.current;
+    const generation = projectGenerationRef.current;
+    if (!preview || !projectPath) return;
+    const requestId = beginScopedProjectRequest("trustedScanBaselineMutation");
+    const clearing = preview.type === "clear";
+    setTrustedScanBaselineMutation({ saving: true, error: "", success: "" });
+    try {
+      const data = await api("/api/trusted-scan-baseline", {
+        method: clearing ? "DELETE" : "PUT",
+        body: clearing ? { project_path: projectPath } : {
+          project_path: projectPath,
+          scan_id: preview.scan.id,
+          replace: trustedScanBaseline.configured,
+        },
+      });
+      if (!scopedProjectRequestIsCurrent("trustedScanBaselineMutation", requestId, projectPath, generation)) return;
+      setTrustedScanBaseline(normalizeTrustedScanBaseline(data));
+      setTrustedScanBaselinePreview(null);
+      if (data.activity_recorded) {
+        await loadActivity(projectPath, generation);
+        if (!scopedProjectRequestIsCurrent("trustedScanBaselineMutation", requestId, projectPath, generation)) return;
+      }
+      setTrustedScanBaselineMutation({
+        saving: false,
+        error: "",
+        success: clearing
+          ? "Trusted scan baseline cleared."
+          : trustedScanBaseline.configured
+            ? "Trusted scan baseline replaced."
+            : "Trusted scan baseline set.",
+      });
+    } catch (error) {
+      if (!isAbortError(error) && scopedProjectRequestIsCurrent("trustedScanBaselineMutation", requestId, projectPath, generation)) {
+        setTrustedScanBaselineMutation({ saving: false, error: error.message, success: "" });
+      }
+    }
+  }
+
+  function compareLatestToTrustedBaseline() {
+    const baseline = trustedScanBaseline.baseline;
+    const latest = trustedScanBaseline.latestScan;
+    if (!baseline || trustedScanBaseline.status !== "valid" || !latest) return;
+    const selection = trustedComparisonSelection(trustedScanBaseline, scanComparison.options);
+    if (!selection) {
+      setTrustedScanBaselineMutation({
+        saving: false,
+        error: "Baseline is the latest scan. A scan cannot be compared against itself.",
+        success: "",
+      });
+      return;
+    }
+    setScanComparison((current) => ({
+      ...current,
+      ...selection,
+      result: null,
+      error: "",
+    }));
+    setSelectedSection("scanComparison");
   }
 
   async function saveTrustProfile(profile, activityContext = null) {
@@ -1328,9 +1448,15 @@ export function App() {
               report={latestProjectReport}
               scan={latestProjectScan}
               scans={scanHistory}
+              project={selectedProject}
+              trustedScanBaseline={trustedScanBaseline}
+              trustedScanBaselineMutation={trustedScanBaselineMutation}
               message={trustProfileMessage}
               onSave={saveTrustProfile}
               onOpenReports={openReports}
+              onRequestTrustedBaseline={requestTrustedScanBaseline}
+              onClearTrustedBaseline={requestClearTrustedScanBaseline}
+              onCompareTrustedBaseline={compareLatestToTrustedBaseline}
             />
           ) : null}
 
@@ -1346,9 +1472,11 @@ export function App() {
           {selectedSection === "scanComparison" && selectedProject && !projectDetailsLoading ? (
             <ScanComparisonView
               state={scanComparison}
+              trustedScanBaseline={trustedScanBaseline}
               onSelectScan={selectComparisonScan}
               onCompare={runSelectedScanComparison}
               onLoadOlder={loadOlderComparisonOptions}
+              onCompareTrustedBaseline={compareLatestToTrustedBaseline}
             />
           ) : null}
 
@@ -1373,7 +1501,15 @@ export function App() {
                 open={majorSectionsOpen.scanReport}
                 onOpenChange={(open) => setMajorSectionOpen("scanReport", open)}
               />
-              <History scans={scanHistory} selectedScanId={selectedScanId} onSelectScan={selectHistoricalScan} open={majorSectionsOpen.history} onOpenChange={(open) => setMajorSectionOpen("history", open)} />
+              <History
+                scans={scanHistory}
+                selectedScanId={selectedScanId}
+                onSelectScan={selectHistoricalScan}
+                trustedScanBaseline={trustedScanBaseline}
+                onRequestTrustedBaseline={requestTrustedScanBaseline}
+                open={majorSectionsOpen.history}
+                onOpenChange={(open) => setMajorSectionOpen("history", open)}
+              />
             </>
           ) : null}
 
@@ -1411,6 +1547,14 @@ export function App() {
           onSubmit={createProject}
           onRegister={registerExistingProject}
           onClose={() => setCreateProjectOpen(false)}
+        />
+      ) : null}
+      {trustedScanBaselinePreview ? (
+        <TrustedScanBaselineConfirmation
+          value={trustedScanBaselinePreview}
+          saving={trustedScanBaselineMutation.saving}
+          onConfirm={confirmTrustedScanBaselineMutation}
+          onCancel={() => setTrustedScanBaselinePreview(null)}
         />
       ) : null}
     </main>
@@ -1451,6 +1595,57 @@ function GuidedReviewChecklist({ state, isScanning, onRunScan, onOpenReports, on
         {state.workflowComplete ? <span>Available review steps are complete for the latest scan.</span> : null}
       </div>
     </section>
+  );
+}
+
+function TrustedScanBaselineConfirmation({ value, saving, onConfirm, onCancel }) {
+  const clearing = value.type === "clear";
+  const preview = value.preview;
+  const baseline = value.baseline;
+  const title = clearing
+    ? "Clear trusted baseline"
+    : preview.replacesScanId
+      ? "Replace trusted baseline"
+      : "Set trusted baseline";
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal-panel trusted-baseline-confirmation" role="dialog" aria-modal="true" aria-labelledby="trusted-baseline-confirmation-title">
+        <div className="panel-heading">
+          <div>
+            <h2 id="trusted-baseline-confirmation-title">{title}</h2>
+            <p className="muted">
+              {clearing
+                ? "This removes only the project-level reference. The scan and its review data remain unchanged."
+                : "Future baseline comparisons will use this exact scan. This does not approve findings, dependencies, or project safety."}
+            </p>
+          </div>
+          <button type="button" className="tertiary-button modal-close" onClick={onCancel} disabled={saving}>Cancel</button>
+        </div>
+        <div className="trusted-baseline-preview-grid">
+          <PreviewFact label="Project" value={clearing ? value.projectName : preview.projectName} />
+          <PreviewFact label={clearing ? "Baseline being cleared" : "Proposed baseline"} value={`Scan #${clearing ? baseline.scanId : preview.scanId}`} />
+          <PreviewFact label="Scan timestamp" value={formatDate(clearing ? baseline.scanDate : preview.scanDate)} />
+          <PreviewFact label="Coverage" value={clearing ? baseline.completionState : preview.completionState} />
+          <PreviewFact label="Reliability" value={clearing ? baseline.reliabilityStatus : preview.reliabilityState} />
+          {!clearing && preview.replacesScanId ? <PreviewFact label="Current baseline" value={`Scan #${preview.replacesScanId}`} /> : null}
+        </div>
+        <div className="modal-actions trusted-baseline-confirmation-actions">
+          <button type="button" className="tertiary-button" onClick={onCancel} disabled={saving}>Cancel</button>
+          <button type="button" className={clearing ? "destructive-button" : "run-scan-button"} onClick={onConfirm} disabled={saving}>
+            {saving ? "Saving..." : title}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function PreviewFact({ label, value }) {
+  return (
+    <div>
+      <span>{label}</span>
+      <strong>{value || "Unavailable"}</strong>
+    </div>
   );
 }
 
@@ -1904,7 +2099,14 @@ function ActivityTimeline({ activity, availableScanIds, onLoadOlder, onOpenScan 
   );
 }
 
-function ScanComparisonView({ state, onSelectScan, onCompare, onLoadOlder }) {
+function ScanComparisonView({
+  state,
+  trustedScanBaseline,
+  onSelectScan,
+  onCompare,
+  onLoadOlder,
+  onCompareTrustedBaseline,
+}) {
   const canCompare = state.options.length >= 2
     && state.baseScanId
     && state.targetScanId
@@ -1920,7 +2122,15 @@ function ScanComparisonView({ state, onSelectScan, onCompare, onLoadOlder }) {
             <h2 id="scan-comparison-title">Compare scans</h2>
             <p className="muted">Choose two saved scans from this project. Comparison is read-only and creates no activity.</p>
           </div>
+          {trustedScanBaseline?.status === "valid" && !trustedScanBaseline.isLatest ? (
+            <button type="button" className="secondary-button compact-action" onClick={onCompareTrustedBaseline}>
+              Compare latest to trusted baseline
+            </button>
+          ) : null}
         </div>
+        {trustedScanBaseline?.configured && trustedScanBaseline.isLatest ? (
+          <p className="comparison-status-detail">Baseline is the latest scan. Self-comparison is unavailable.</p>
+        ) : null}
         {state.options.length < 2 && !state.loading ? (
           <div className="empty-state compact">
             <strong>At least two scans are required.</strong>
@@ -3052,7 +3262,15 @@ function Notes({ notes, noteBody, setNoteBody, onAdd, open, onOpenChange }) {
   );
 }
 
-function History({ scans, selectedScanId, onSelectScan, open, onOpenChange }) {
+function History({
+  scans,
+  selectedScanId,
+  onSelectScan,
+  trustedScanBaseline,
+  onRequestTrustedBaseline,
+  open,
+  onOpenChange,
+}) {
   return (
     <details className="panel section-toggle" open={open} onToggle={(event) => onOpenChange(event.currentTarget.open)}>
       <summary className="section-summary">
@@ -3067,6 +3285,8 @@ function History({ scans, selectedScanId, onSelectScan, open, onOpenChange }) {
           const selected = selectedScanId === scan.id;
           const completeness = normalizeScanCompleteness(scan);
           const reviewSummary = findingReviewSummary(scan);
+          const eligibility = trustedScanEligibility(scan);
+          const pinned = trustedScanBaseline?.baseline?.scanId === scan.id;
           return (
           <div className={`history-row ${selected ? "selected-history-row" : ""}`} key={scan.id}>
             <div className="history-primary">
@@ -3085,6 +3305,16 @@ function History({ scans, selectedScanId, onSelectScan, open, onOpenChange }) {
             <button type="button" className="history-view-button" onClick={() => onSelectScan(selected ? null : scan.id)}>
               {selected ? "Viewing" : "View"}
             </button>
+            {pinned ? <span className="trusted-scan-history-label">Trusted baseline</span> : null}
+            {!pinned && eligibility.eligible ? (
+              <button
+                type="button"
+                className="secondary-button compact-action trusted-baseline-history-action"
+                onClick={() => onRequestTrustedBaseline(scan)}
+              >
+                {trustedScanBaseline?.configured ? "Replace trusted baseline" : "Set trusted baseline"}
+              </button>
+            ) : null}
             {riskChanged ? <span className="risk-change">Changed from {previousScan.overall_risk}</span> : null}
           </div>
           );

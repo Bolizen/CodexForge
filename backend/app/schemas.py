@@ -103,3 +103,11 @@ class TrustedDependencyBaselineNote(ProjectPathRequest):
 
     class Config:
         extra = "forbid"
+
+
+class TrustedScanBaselineSet(ProjectPathRequest):
+    scan_id: int = Field(gt=0)
+    replace: bool = False
+
+    class Config:
+        extra = "forbid"

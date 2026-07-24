@@ -15,6 +15,7 @@ import {
   dependencyStatusLabel,
 } from "./dependencyTrust.js";
 import { buildProjectDriftSummary } from "./projectDrift.js";
+import { trustedScanEligibility } from "./trustedScanBaseline.js";
 
 const STATE_LABELS = {
   observed: "Observed",
@@ -29,9 +30,15 @@ export function ProjectExpectationsPanel({
   report,
   scan,
   scans,
+  project,
+  trustedScanBaseline,
+  trustedScanBaselineMutation,
   message,
   onSave,
   onOpenReports,
+  onRequestTrustedBaseline,
+  onClearTrustedBaseline,
+  onCompareTrustedBaseline,
 }) {
   const normalizedProfile = useMemo(() => normalizeProjectExpectations(profile), [profile]);
   const model = useMemo(
@@ -39,8 +46,12 @@ export function ProjectExpectationsPanel({
     [normalizedProfile, report, scan],
   );
   const drift = useMemo(
-    () => buildProjectDriftSummary({ scans, profile: normalizedProfile }),
-    [scans, normalizedProfile],
+    () => buildProjectDriftSummary({
+      scans,
+      profile: normalizedProfile,
+      trustedBaseline: trustedScanBaseline,
+    }),
+    [scans, normalizedProfile, trustedScanBaseline],
   );
   const [editingField, setEditingField] = useState("");
   const [fieldDraft, setFieldDraft] = useState("");
@@ -168,6 +179,16 @@ export function ProjectExpectationsPanel({
           changes coverage, or establishes that this project is safe.
         </p>
       </div>
+
+      <TrustedScanBaselinePanel
+        project={project}
+        scan={scan}
+        state={trustedScanBaseline}
+        mutation={trustedScanBaselineMutation}
+        onRequestBaseline={onRequestTrustedBaseline}
+        onClear={onClearTrustedBaseline}
+        onCompare={onCompareTrustedBaseline}
+      />
 
       <ProjectDriftSummary
         summary={drift}
@@ -355,7 +376,7 @@ function ProjectDriftSummary({
       <div className="project-drift-sections">
         <DriftSection
           title="Scan-to-scan drift"
-          description="Latest complete, reliable scan compared with the preceding complete, reliable baseline."
+          description={baselineDescription(summary)}
           section={summary.scanToScan}
           expectation={false}
         />
@@ -374,6 +395,58 @@ function ProjectDriftSummary({
           onCancel={onCancelAdoption}
         />
       ) : null}
+    </section>
+  );
+}
+
+function TrustedScanBaselinePanel({ project, scan, state, mutation, onRequestBaseline, onClear, onCompare }) {
+  const configured = state?.configured === true;
+  const valid = configured && state.status === "valid";
+  const isLatest = state?.isLatest === true;
+  const baseline = state?.baseline;
+  const latestEligible = trustedScanEligibility(scan).eligible;
+  return (
+    <section className={`trusted-scan-baseline trusted-scan-baseline-${state?.status || "not-configured"}`}>
+      <div className="trusted-scan-baseline-heading">
+        <div>
+          <h3>Trusted scan baseline</h3>
+          <p>
+            A pinned scan is only a comparison reference. It does not approve findings, dependencies, or project safety.
+          </p>
+        </div>
+        <span>{valid ? "Trusted baseline" : configured ? "Trusted baseline unavailable" : "Automatic baseline"}</span>
+      </div>
+      {baseline ? (
+        <div className="trusted-scan-baseline-facts">
+          <strong>Scan #{baseline.scanId}</strong>
+          <time dateTime={baseline.scanDate || undefined}>{formatBaselineDate(baseline.scanDate)}</time>
+          <span>{baseline.reliabilityStatus || "indeterminate"}</span>
+          {isLatest ? <span>Baseline is the latest scan</span> : null}
+        </div>
+      ) : (
+        <p>{state?.message || "No trusted scan baseline is configured. Automatic baseline selection remains active."}</p>
+      )}
+      {configured ? <p>{state.message}</p> : null}
+      <div className="trusted-scan-baseline-actions">
+        {latestEligible && (!configured || baseline?.scanId !== scan.id) ? (
+          <button type="button" className="secondary-button compact-action" onClick={() => onRequestBaseline(scan)}>
+            {configured ? "Replace trusted baseline" : "Set trusted baseline"}
+          </button>
+        ) : null}
+        {valid && !isLatest ? (
+          <button type="button" className="secondary-button compact-action" onClick={onCompare}>
+            Compare latest to trusted baseline
+          </button>
+        ) : null}
+        {configured ? (
+          <button type="button" className="history-view-button destructive-button" onClick={onClear}>
+            Clear trusted baseline
+          </button>
+        ) : null}
+      </div>
+      {!configured && project?.name ? <small>Automatic baseline selection remains active for {project.name}.</small> : null}
+      {mutation?.error ? <p className="notice">{mutation.error}</p> : null}
+      {mutation?.success ? <p className="expectation-save-message">{mutation.success}</p> : null}
     </section>
   );
 }
@@ -505,15 +578,23 @@ function DriftCount({ label, value, tone }) {
 }
 
 function combinedDriftStatus(summary) {
-  if (summary.scanToScan.status === "indeterminate" || summary.expectations.status === "indeterminate") {
+  if (
+    ["indeterminate", "trusted-baseline-unavailable"].includes(summary.scanToScan.status)
+    || summary.expectations.status === "indeterminate"
+  ) {
     return "indeterminate";
   }
   if (summary.scanToScan.status === "drift" || summary.expectations.status === "drift") return "drift";
-  if (summary.scanToScan.status === "no-baseline" || summary.expectations.status === "unconfigured") return "context";
+  if (
+    ["no-baseline", "baseline-is-latest"].includes(summary.scanToScan.status)
+    || summary.expectations.status === "unconfigured"
+  ) return "context";
   return "unchanged";
 }
 
 function combinedDriftLabel(summary) {
+  if (summary.scanToScan.status === "baseline-is-latest") return "Baseline is latest";
+  if (summary.scanToScan.status === "trusted-baseline-unavailable") return "Trusted baseline unavailable";
   const status = combinedDriftStatus(summary);
   if (status === "indeterminate") return "Indeterminate";
   if (status === "drift") return "Drift observed";
@@ -525,8 +606,27 @@ function driftStatusLabel(status) {
   if (status === "drift") return "Drift observed";
   if (status === "unchanged") return "Unchanged";
   if (status === "no-baseline") return "No baseline";
+  if (status === "baseline-is-latest") return "Baseline is latest";
+  if (status === "trusted-baseline-unavailable") return "Trusted baseline unavailable";
   if (status === "unconfigured") return "No approvals";
   return "Indeterminate";
+}
+
+function baselineDescription(summary) {
+  const source = summary.baselineSource;
+  const identity = source?.scan?.id
+    ? ` Scan #${source.scan.id}${source.scan.date ? ` from ${formatBaselineDate(source.scan.date)}` : ""}.`
+    : "";
+  if (source?.type === "trusted") return `Latest scan compared with the exact trusted baseline.${identity}`;
+  if (source?.type === "trusted-unavailable") return `The pinned trusted baseline takes precedence but cannot be compared.${identity}`;
+  if (source?.type === "automatic") return `Latest complete, reliable scan compared with the automatic preceding reliable baseline.${identity}`;
+  return "No scan baseline is currently available.";
+}
+
+function formatBaselineDate(value) {
+  if (!value) return "Timestamp unavailable";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Timestamp unavailable" : date.toLocaleString();
 }
 
 function ExpectationValueGroup({ title, empty, children }) {

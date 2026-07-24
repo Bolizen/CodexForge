@@ -71,6 +71,93 @@ def compare_scan_rows(first_row: Any, second_row: Any) -> dict[str, Any]:
     }
 
 
+def trusted_scan_eligibility(row: Any) -> dict[str, Any]:
+    scan = _comparison_scan(row)
+    coverage = _coverage_snapshot(row)
+    if coverage is None:
+        return {
+            "eligible": False,
+            "status": "indeterminate",
+            "reason": "Coverage metadata is missing, malformed, or internally inconsistent.",
+        }
+    if coverage["complete"] is not True:
+        return {
+            "eligible": False,
+            "status": "incomplete",
+            "reason": "Scan coverage is incomplete.",
+        }
+    metadata = _metadata_source(scan)
+    if metadata.get("reliable") is not True:
+        return {
+            "eligible": False,
+            "status": "indeterminate",
+            "reason": str(metadata.get("reason") or "Persisted scan metadata is unreliable."),
+        }
+    dependency = _dependency_inventory(scan.get("dependencyTrust"))
+    if dependency["state"] != "complete":
+        return {
+            "eligible": False,
+            "status": "indeterminate" if dependency["state"] == "indeterminate" else dependency["state"],
+            "reason": "Dependency metadata is not in a supported complete state.",
+        }
+    return {
+        "eligible": True,
+        "status": "reliable",
+        "reason": "Coverage, persisted project metadata, and supported dependency metadata are complete and reliable.",
+    }
+
+
+def trusted_scan_summary(row: Any, *, include_metadata: bool = False) -> dict[str, Any]:
+    scan = _comparison_scan(row)
+    eligibility = trusted_scan_eligibility(row)
+    summary = {
+        **_scan_summary(row, scan),
+        "eligibility": eligibility,
+    }
+    summary["scanDate"] = str(summary["scanDate"])[:100]
+    if include_metadata and eligibility["eligible"]:
+        summary["scan"] = {
+            "id": int(row["id"]),
+            "scan_date": str(row["scan_date"] or "")[:100],
+            **_trusted_metadata_snapshot(scan),
+        }
+    return summary
+
+
+def _trusted_metadata_snapshot(scan: dict[str, Any]) -> dict[str, Any]:
+    def strings(value: Any) -> list[str]:
+        return [
+            _bounded_text(item, 500)
+            for item in value[:MAX_METADATA_VALUES]
+            if isinstance(item, str)
+        ] if isinstance(value, list) else []
+
+    scripts = scan.get("lifecycleScripts")
+    dependency = scan.get("dependencyTrust")
+    return {
+        "manifests": strings(scan.get("manifests")),
+        "lockfiles": strings(scan.get("lockfiles")),
+        "lifecycleScripts": [
+            {
+                "path": _bounded_text(item.get("path"), 500),
+                "script": _bounded_text(item.get("script"), 300),
+            }
+            for item in scripts[:MAX_METADATA_VALUES]
+            if isinstance(item, dict)
+        ] if isinstance(scripts, list) else [],
+        "ignoredFiles": strings(scan.get("ignoredFiles")),
+        "reviewedFiles": strings(scan.get("reviewedFiles")),
+        "scanCompleteness": _bounded_value(scan.get("scanCompleteness")),
+        "scanMetadataReliable": True,
+        "dependencyTrust": {
+            "schemaVersion": dependency.get("schemaVersion"),
+            "status": _bounded_text(dependency.get("status"), 40),
+            "packageManagers": strings(dependency.get("packageManagers")),
+            "ecosystems": strings(dependency.get("ecosystems")),
+        } if isinstance(dependency, dict) else {},
+    }
+
+
 def _chronological_rows(first: Any, second: Any) -> tuple[Any, Any]:
     def key(row: Any) -> tuple[datetime, int]:
         raw = str(row["scan_date"] or "")

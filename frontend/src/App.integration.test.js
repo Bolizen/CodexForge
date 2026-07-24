@@ -1419,6 +1419,18 @@ test("scan remains active through follow-up loading", async () => {
   assert.equal(runScanButton().textContent, "Scanning...");
 
   await respond(historyRequest, { scans: [] });
+  const activityRequest = await fetchHarness.next("/api/activity", { projectPath: PROJECT_A_PATH });
+  await respond(activityRequest, { events: [], has_more: false, next_offset: null });
+  const comparisonOptionsRequest = await fetchHarness.next("/api/scans/comparison-options", { projectPath: PROJECT_A_PATH });
+  await respond(comparisonOptionsRequest, { scans: [], hasMore: false, nextOffset: null });
+  const trustedBaselineRequest = await fetchHarness.next("/api/trusted-scan-baseline", { projectPath: PROJECT_A_PATH });
+  await respond(trustedBaselineRequest, {
+    configured: false,
+    status: "not-configured",
+    baseline: null,
+    latestScan: null,
+    isLatest: false,
+  });
   const projectsRequest = await fetchHarness.next("/api/projects");
   await respond(projectsRequest, { project_root: "C:/workspace", message: "", projects: [PROJECT_A, PROJECT_B] });
   assert.equal(runScanButton().disabled, false);
@@ -1906,15 +1918,16 @@ async function renderReadyProjectA() {
 
 async function takeDetailRequests(projectPath) {
   const options = { projectPath };
-  const [notes, scanHistory, trustProfile, activity, comparisonOptions, agentsExists] = await Promise.all([
+  const [notes, scanHistory, trustProfile, activity, comparisonOptions, trustedScanBaseline, agentsExists] = await Promise.all([
     fetchHarness.next("/api/notes", options),
     fetchHarness.next("/api/scans/history", options),
     fetchHarness.next("/api/trust-profile", options),
     fetchHarness.next("/api/activity", options),
     fetchHarness.next("/api/scans/comparison-options", options),
+    fetchHarness.next("/api/trusted-scan-baseline", options),
     fetchHarness.next("/api/agents/exists", options),
   ]);
-  return { notes, scanHistory, trustProfile, activity, comparisonOptions, agentsExists };
+  return { notes, scanHistory, trustProfile, activity, comparisonOptions, trustedScanBaseline, agentsExists };
 }
 
 async function resolveDetails(requests, options = {}) {
@@ -1934,6 +1947,19 @@ async function resolveDetails(requests, options = {}) {
       })),
       hasMore: false,
       nextOffset: null,
+    },
+    trustedScanBaseline: options.trustedScanBaseline || {
+      configured: false,
+      status: "not-configured",
+      baseline: null,
+      latestScan: options.scans?.[0] ? {
+        id: options.scans[0].id,
+        scanDate: options.scans[0].scan_date,
+        completionState: options.scans[0].scanCompleteness?.complete === true ? "complete" : "unknown",
+        reliabilityStatus: options.scans[0].scanMetadataReliable === true ? "reliable" : "indeterminate",
+      } : null,
+      isLatest: false,
+      message: "No trusted scan baseline is configured. Automatic baseline selection remains active.",
     },
     agentsExists: { exists: Boolean(options.agentsExists) },
   };
@@ -1960,6 +1986,20 @@ async function finishScan(request, result, history) {
     projectPath: PROJECT_A_PATH,
   });
   await respond(activityRequest, { events: [], has_more: false, next_offset: null });
+  const comparisonOptionsRequest = await fetchHarness.next("/api/scans/comparison-options", {
+    projectPath: PROJECT_A_PATH,
+  });
+  await respond(comparisonOptionsRequest, { scans: [], hasMore: false, nextOffset: null });
+  const trustedBaselineRequest = await fetchHarness.next("/api/trusted-scan-baseline", {
+    projectPath: PROJECT_A_PATH,
+  });
+  await respond(trustedBaselineRequest, {
+    configured: false,
+    status: "not-configured",
+    baseline: null,
+    latestScan: null,
+    isLatest: false,
+  });
   const projectsRequest = await fetchHarness.next("/api/projects");
   await respond(projectsRequest, {
     project_root: "C:/workspace",
