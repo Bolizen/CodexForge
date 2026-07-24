@@ -2,11 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   acceptExpectationSuggestion,
+  adoptObservedExpectation,
   buildAgentsProjectContext,
   buildProjectExpectationsViewModel,
   dismissExpectationSuggestion,
   editApprovedExpectations,
   normalizeProjectExpectations,
+  previewObservedExpectationAdoption,
   provenanceLabel,
   removeApprovedExpectation,
 } from "./projectExpectations.js";
@@ -73,6 +75,53 @@ test("single suggestion acceptance records provenance without approving sibling 
   });
   assert.deepEqual(field(model, "trustedPackageManagers").suggestions, ["pip"]);
   assert.equal(field(model, "trustedPackageManagers").state, "changed");
+});
+
+test("observed drift adoption is granular across all expectation categories", () => {
+  const cases = [
+    ["trustedPackageManagers", "npm", "pnpm"],
+    ["expectedManifestFiles", "package.json", "pyproject.toml"],
+    ["expectedLockfiles", "package-lock.json", "pnpm-lock.yaml"],
+    ["allowedLifecycleScripts", "postinstall", "prepare"],
+    ["expectedEcosystems", "node", "python"],
+    ["reviewedPaths", "src/legacy.js", "src/main.js"],
+    ["ignoredPaths", "vendor/legacy.js", "vendor/current.js"],
+  ];
+  const profile = {
+    expectationProvenance: {},
+    dismissedSuggestions: {},
+  };
+  for (const [fieldName, approved, observed] of cases) {
+    profile[fieldName] = [approved];
+    profile.expectationProvenance[fieldName] = { [approved]: "manual" };
+    profile.dismissedSuggestions[fieldName] = [observed];
+  }
+  const original = structuredClone(profile);
+  let adopted = profile;
+
+  for (const [fieldName, approved, observed] of cases) {
+    const preview = previewObservedExpectationAdoption(adopted, fieldName, observed, approved);
+    assert.equal(preview.eligible, true);
+    assert.deepEqual(preview.added, [observed]);
+    assert.deepEqual(preview.removedOrReplaced, [approved]);
+    assert.deepEqual(preview.resultingApprovedValues, [observed]);
+    adopted = adoptObservedExpectation(adopted, fieldName, observed, approved);
+    assert.deepEqual(adopted[fieldName], [observed]);
+    assert.equal(adopted.expectationProvenance[fieldName][observed], "accepted-suggestion");
+    assert.deepEqual(adopted.dismissedSuggestions[fieldName] || [], []);
+  }
+
+  assert.deepEqual(profile, original, "adoption must not mutate the stored profile");
+  const additive = previewObservedExpectationAdoption(
+    { expectedManifestFiles: ["package.json"] },
+    "expectedManifestFiles",
+    "pyproject.toml",
+  );
+  assert.deepEqual(additive.removedOrReplaced, []);
+  assert.deepEqual(additive.resultingApprovedValues, ["package.json", "pyproject.toml"]);
+  const ineligible = previewObservedExpectationAdoption(adopted, "expectedManifestFiles", "pyproject.toml");
+  assert.equal(ineligible.eligible, false);
+  assert.deepEqual(ineligible.nextProfile.expectedManifestFiles, ["pyproject.toml"]);
 });
 
 test("manual editing, removal, and retained observations stay independent", () => {

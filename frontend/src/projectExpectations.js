@@ -170,6 +170,43 @@ export function acceptExpectationSuggestion(profile, field, value) {
   return next;
 }
 
+export function previewObservedExpectationAdoption(profile, field, observedValue, replacedValue = "") {
+  const current = normalizeProjectExpectations(profile);
+  if (!FIELD_MAP.has(field)) return ineligibleAdoption(current, field);
+
+  const observed = normalizeFieldValue(field, observedValue);
+  if (!observed || includesFieldValue(field, current[field], observed)) {
+    return ineligibleAdoption(current, field);
+  }
+
+  const replaced = normalizeFieldValue(field, replacedValue);
+  const removesApprovedValue = replaced
+    && comparisonValue(field, replaced) !== comparisonValue(field, observed)
+    && includesFieldValue(field, current[field], replaced);
+  const withoutReplacement = removesApprovedValue
+    ? removeApprovedExpectation(current, field, replaced)
+    : current;
+  const nextProfile = acceptExpectationSuggestion(withoutReplacement, field, observed);
+
+  return {
+    eligible: true,
+    field,
+    added: [observed],
+    removedOrReplaced: removesApprovedValue ? [replaced] : [],
+    resultingApprovedValues: [...nextProfile[field]],
+    nextProfile,
+  };
+}
+
+export function adoptObservedExpectation(profile, field, observedValue, replacedValue = "") {
+  return previewObservedExpectationAdoption(
+    profile,
+    field,
+    observedValue,
+    replacedValue,
+  ).nextProfile;
+}
+
 export function dismissExpectationSuggestion(profile, field, value) {
   const next = normalizeProjectExpectations(profile);
   if (!FIELD_MAP.has(field)) return next;
@@ -403,6 +440,17 @@ function updateFieldObject(source, field, value) {
   if (Array.isArray(value) ? value.length > 0 : Object.keys(value).length > 0) next[field] = value;
   else delete next[field];
   return next;
+}
+
+function ineligibleAdoption(profile, field) {
+  return {
+    eligible: false,
+    field,
+    added: [],
+    removedOrReplaced: [],
+    resultingApprovedValues: FIELD_MAP.has(field) ? [...profile[field]] : [],
+    nextProfile: profile,
+  };
 }
 
 function objectValue(value) {

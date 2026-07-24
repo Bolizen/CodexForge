@@ -149,6 +149,83 @@ test("Project Expectations drift summary survives navigation and saved-section r
   assert.ok(document.querySelector(".project-drift-summary"));
 });
 
+test("selectively adopts one reliable observed drift value after explicit preview confirmation", async () => {
+  const current = withCompleteness({
+    ...scan(25, "high", "2026-07-13T12:00:00Z"),
+    manifests: ["pyproject.toml"],
+    lockfiles: ["package-lock.json"],
+    lifecycleScripts: [{ path: "package.json", script: "postinstall" }],
+    reviewedFiles: ["src/main.js"],
+    ignoredFiles: ["vendor/output.js"],
+    dependencyTrust: dependencyTrustFixture(),
+    scanMetadataReliable: true,
+  }, { complete: true });
+  const currentBefore = structuredClone(current);
+  const profile = {
+    project_path: PROJECT_A_PATH,
+    trustedPackageManagers: ["npm", "pip"],
+    expectedManifestFiles: ["package.json"],
+    expectedLockfiles: ["package-lock.json"],
+    allowedLifecycleScripts: ["postinstall"],
+    expectedEcosystems: ["node", "python"],
+    reviewedPaths: ["src/main.js"],
+    ignoredPaths: ["vendor/output.js"],
+    expectationProvenance: {
+      expectedManifestFiles: { "package.json": "manual" },
+    },
+    dismissedSuggestions: {
+      expectedManifestFiles: ["pyproject.toml"],
+      ignoredPaths: ["vendor/other.js"],
+    },
+  };
+
+  await renderApp();
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), {
+    scans: [current],
+    trustProfile: profile,
+  });
+  await click(document.querySelector('a[href="#project-expectations"]'));
+
+  const expectationDrift = [...document.querySelectorAll(".project-drift-section")]
+    .find((section) => section.textContent.includes("Expectation drift"));
+  assert.ok(expectationDrift);
+  const manifestDrift = [...expectationDrift.querySelectorAll(".project-drift-category")]
+    .find((category) => category.textContent.includes("Dependency manifests"));
+  assert.ok(manifestDrift);
+  assert.equal(expectationDrift.querySelectorAll("button").length, 1);
+  assert.doesNotMatch(expectationDrift.textContent, /accept all|adopt all/i);
+
+  await click(manifestDrift.querySelector("button"));
+  let preview = document.querySelector(".project-drift-adoption-preview");
+  assert.ok(preview);
+  assert.match(preview.textContent, /Values being added\s*pyproject\.toml/);
+  assert.match(preview.textContent, /Values being removed or replaced\s*package\.json/);
+  assert.match(preview.textContent, /Resulting approved expectation values\s*pyproject\.toml/);
+  assert.equal(fetchHarness.count("/api/trust-profile", "PUT"), 0);
+
+  await click([...preview.querySelectorAll("button")].find((button) => button.textContent === "Cancel"));
+  assert.equal(document.querySelector(".project-drift-adoption-preview"), null);
+  assert.equal(fetchHarness.count("/api/trust-profile", "PUT"), 0);
+
+  await click(manifestDrift.querySelector("button"));
+  preview = document.querySelector(".project-drift-adoption-preview");
+  await click([...preview.querySelectorAll("button")].find((button) => button.textContent === "Confirm adoption"));
+  const save = await fetchHarness.next("/api/trust-profile", { method: "PUT" });
+  assert.deepEqual(save.body.expectedManifestFiles, ["pyproject.toml"]);
+  assert.deepEqual(save.body.expectationProvenance.expectedManifestFiles, {
+    "pyproject.toml": "accepted-suggestion",
+  });
+  assert.deepEqual(save.body.dismissedSuggestions, {
+    ignoredPaths: ["vendor/other.js"],
+  });
+  assert.deepEqual(current, currentBefore, "adoption must not mutate scan data or findings");
+  assert.equal(fetchHarness.count("/api/finding-reviews", "PUT"), 0);
+  assert.equal(fetchHarness.count("/api/scans", "POST"), 0);
+  await respond(save, save.body);
+  assert.equal(document.querySelector(".project-drift-adoption-preview"), null);
+  assert.match(expectationCard("Dependency manifests").textContent, /pyproject\.toml/);
+});
+
 test("missing and unavailable stored projects fall back through normal selection", async () => {
   storeSession({ selectedProjectPath: "C:/workspace/missing", activeSection: "reports" });
   await renderApp();
@@ -1496,6 +1573,8 @@ test("Project Expectations fails conservatively for malformed legacy data and in
   assert.equal(manifests.querySelectorAll(".expectation-suggestion").length, 0);
   assert.match(expectationCard("Package managers").textContent, /coverage is incomplete/i);
   assert.match(document.querySelector(".expectation-review-context select").value, /normal/);
+  assert.equal(document.querySelectorAll(".project-drift-adoption-row button").length, 0);
+  assert.doesNotMatch(document.querySelector(".project-drift-summary").textContent, /Adopt into expectations/);
 });
 
 test("finding review and reopen update the real scan, history, and Markdown workflow", async () => {

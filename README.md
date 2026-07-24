@@ -15,7 +15,7 @@ Glacial is an early stage local-first project focused on project scanning, safet
 
 ## Licensing
 
-Glacial v0.6.2 is licensed under the Functional Source License, Version 1.1, ALv2 Future License (`FSL-1.1-ALv2`). It is Fair Source and source-available, but it is not presently OSI open source.
+Glacial v0.6.3 is licensed under the Functional Source License, Version 1.1, ALv2 Future License (`FSL-1.1-ALv2`). It is Fair Source and source-available, but it is not presently OSI open source.
 
 Internal use, study, modification, and redistribution are permitted subject to the license. Offering Glacial, or substantially similar functionality, to others as a competing commercial product or service is not permitted under the public license. Separate commercial licensing may be available from the copyright holder.
 
@@ -151,6 +151,7 @@ The standalone debugging port remains `8000`; Tauri development uses an ephemera
 - Recent scans are stored locally in SQLite as compact metadata: timestamp, overall risk, finding count, reviewed file count, ignored file count, finding-type summary, and risk-change marker.
 - The "Changed since previous scan" section compares the newest scan with the immediately previous scan for the same project, showing risk change, count deltas, and finding-type summary changes. If there is no previous scan, it shows a friendly empty state.
 - Project Expectations includes a separate Project Drift Summary comparing the latest complete, reliable scan with the preceding complete, reliable baseline and with user-approved expectation values. Added, removed, changed, new, missing, matching, and indeterminate states remain metadata context and never mutate approvals or findings.
+- Reliable expectation drift can be adopted one observed value at a time through an explicit added/removed/result preview and confirmation. There is no bulk adoption action, and incomplete or historical observations remain read-only.
 - Copied and downloaded Markdown reports include every scanner finding with its severity, type, path, explanation, recommended action, and available metadata, plus the compact offline Dependency Trust summary, previous-scan changes, and separately labelled trusted-baseline status and drift evidence.
 - Individual findings can be marked reviewed or reviewed as expected with an optional reason. Reviews are project-scoped and match only a versioned SHA-256 fingerprint of the finding type, project-relative path, severity, and stable scanner evidence; display wording, timestamps, absolute host context, and the raw evidence itself are not exposed by the fingerprint. Changing the path, finding type, matched pattern, or other identity evidence makes the finding unreviewed again.
 - Fingerprint paths normalize `/` and `\\` separators but preserve letter case, so a case-only path change is intentionally treated as changed evidence on every platform. Severity is also identity-defining: a scanner policy change that alters severity requires a fresh review rather than carrying forward an acknowledgement made under a different risk classification.

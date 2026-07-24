@@ -2,6 +2,16 @@ from __future__ import annotations
 
 CHANGELOG_ENTRIES = [
     {
+        "version": "0.6.3",
+        "title": "Selective project drift adoption",
+        "changes": [
+            "Added per-value adoption actions for reliable drift across all seven Project Expectations categories.",
+            "Added an explicit preview of values added, removed or replaced, and the resulting approved expectations before confirmation.",
+            "Kept incomplete and historical observations read-only and omitted any bulk drift-adoption action.",
+            "Preserved scan evidence, findings, raw risk, review state, coverage, dependency approval, dismissal state, and expectation provenance.",
+        ],
+    },
+    {
         "version": "0.6.2",
         "title": "Project drift summary",
         "changes": [

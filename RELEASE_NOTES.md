@@ -1,6 +1,14 @@
-# Glacial 0.6.2 Project Drift Summary
+# Glacial 0.6.3 Selective Project Drift Adoption
 
-Glacial 0.6.2 explains how the latest complete, reliable project observations differ from both the preceding complete, reliable scan and the user’s approved Project Expectations. Drift remains review context; it is not automatically a security finding.
+Glacial 0.6.3 turns reliable expectation drift into a deliberate, per-value update workflow while keeping observations, approvals, and security analysis separate.
+
+## Selective drift adoption
+
+- Adds “Adopt into expectations” beside eligible observed values in expectation drift across package managers, manifests, lockfiles, lifecycle scripts, ecosystems, reviewed paths, and ignored paths.
+- Shows a compact preview of values being added, values being removed or replaced, and the resulting approved expectation values before requiring explicit confirmation.
+- Saves through the existing Project Expectations persistence and normalization path, retaining per-value provenance and existing dismissal behavior.
+- Provides no bulk adoption action. Indeterminate or unreliable drift, historical scans, and exported reports remain read-only.
+- Adoption never changes findings, severity, raw risk, review state, scan history, raw scan data, coverage, dependency approval, or review completion.
 
 ## Project drift summary
 

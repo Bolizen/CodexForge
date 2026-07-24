@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   acceptExpectationSuggestion,
+  adoptObservedExpectation,
   buildProjectExpectationsViewModel,
   dismissExpectationSuggestion,
   editApprovedExpectations,
   normalizeProjectExpectations,
+  previewObservedExpectationAdoption,
   provenanceLabel,
   removeApprovedExpectation,
 } from "./projectExpectations.js";
@@ -47,6 +49,7 @@ export function ProjectExpectationsPanel({
     notes: normalizedProfile.notes,
   });
   const [localMessage, setLocalMessage] = useState("");
+  const [adoptionPreview, setAdoptionPreview] = useState(null);
 
   useEffect(() => {
     setEditingField("");
@@ -56,6 +59,7 @@ export function ProjectExpectationsPanel({
       notes: normalizedProfile.notes,
     });
     setLocalMessage("");
+    setAdoptionPreview(null);
   }, [normalizedProfile.project_path]);
 
   useEffect(() => {
@@ -103,6 +107,36 @@ export function ProjectExpectationsPanel({
     });
   }
 
+  function beginAdoption(candidate) {
+    const preview = previewObservedExpectationAdoption(
+      normalizedProfile,
+      candidate.field,
+      candidate.observedValue,
+      candidate.replacedValue,
+    );
+    if (!preview.eligible) {
+      setLocalMessage("This observation cannot be adopted into Project Expectations.");
+      setAdoptionPreview(null);
+      return;
+    }
+    setAdoptionPreview({ ...preview, label: candidate.label });
+    setLocalMessage("");
+  }
+
+  function confirmAdoption() {
+    if (!adoptionPreview?.eligible) return;
+    const observedValue = adoptionPreview.added[0];
+    const replacedValue = adoptionPreview.removedOrReplaced[0] || "";
+    onSave(adoptObservedExpectation(
+      normalizedProfile,
+      adoptionPreview.field,
+      observedValue,
+      replacedValue,
+    ));
+    setLocalMessage(`Adopted ${observedValue} into Project Expectations.`);
+    setAdoptionPreview(null);
+  }
+
   return (
     <section className="panel project-expectations-panel" id="project-expectations">
       <div className="panel-heading project-expectations-heading">
@@ -127,7 +161,13 @@ export function ProjectExpectationsPanel({
         </p>
       </div>
 
-      <ProjectDriftSummary summary={drift} />
+      <ProjectDriftSummary
+        summary={drift}
+        adoptionPreview={adoptionPreview}
+        onBeginAdoption={beginAdoption}
+        onConfirmAdoption={confirmAdoption}
+        onCancelAdoption={() => setAdoptionPreview(null)}
+      />
 
       <div className="expectation-field-list">
         {model.fields.map((field) => (
@@ -286,7 +326,13 @@ export function ProjectExpectationsPanel({
   );
 }
 
-function ProjectDriftSummary({ summary }) {
+function ProjectDriftSummary({
+  summary,
+  adoptionPreview,
+  onBeginAdoption,
+  onConfirmAdoption,
+  onCancelAdoption,
+}) {
   return (
     <section className="project-drift-summary" aria-labelledby="project-drift-title">
       <div className="project-drift-heading">
@@ -310,13 +356,21 @@ function ProjectDriftSummary({ summary }) {
           description="Latest complete, reliable observations compared with user-approved Project Expectations."
           section={summary.expectations}
           expectation
+          onBeginAdoption={onBeginAdoption}
         />
       </div>
+      {adoptionPreview ? (
+        <AdoptionPreview
+          preview={adoptionPreview}
+          onConfirm={onConfirmAdoption}
+          onCancel={onCancelAdoption}
+        />
+      ) : null}
     </section>
   );
 }
 
-function DriftSection({ title, description, section, expectation }) {
+function DriftSection({ title, description, section, expectation, onBeginAdoption }) {
   const changedCategories = section.categories.filter((category) => category.status === "changed");
   return (
     <article className={`project-drift-section drift-state-${section.status}`}>
@@ -341,22 +395,54 @@ function DriftSection({ title, description, section, expectation }) {
             <div className="project-drift-category" key={category.field}>
               <strong>{category.label}</strong>
               {category.changed.map((change) => (
-                <span key={`${change.before}-${change.after}`}>
-                  <em>{expectation ? "Approved" : "Previous"}</em>
-                  <code>{change.before}</code>
-                  <b aria-hidden="true">→</b>
-                  <em>{expectation ? "Observed" : "Current"}</em>
-                  <code>{change.after}</code>
-                </span>
+                <div className={expectation ? "project-drift-adoption-row" : "project-drift-readonly-row"} key={`${change.before}-${change.after}`}>
+                  <span>
+                    <em>{expectation ? "Approved" : "Previous"}</em>
+                    <code>{change.before}</code>
+                    <b aria-hidden="true">→</b>
+                    <em>{expectation ? "Observed" : "Current"}</em>
+                    <code>{change.after}</code>
+                  </span>
+                  {expectation ? (
+                    <button
+                      type="button"
+                      className="secondary-button compact-action"
+                      onClick={() => onBeginAdoption({
+                        field: category.field,
+                        label: category.label,
+                        observedValue: change.after,
+                        replacedValue: change.before,
+                      })}
+                    >
+                      Adopt into expectations
+                    </button>
+                  ) : null}
+                </div>
               ))}
               {category.added.map((value) => (
-                <span key={`added-${value}`}>
-                  <em>{expectation ? "New observation" : "Added"}</em>
-                  <code>{value}</code>
-                </span>
+                <div className={expectation ? "project-drift-adoption-row" : "project-drift-readonly-row"} key={`added-${value}`}>
+                  <span>
+                    <em>{expectation ? "New observation" : "Added"}</em>
+                    <code>{value}</code>
+                  </span>
+                  {expectation ? (
+                    <button
+                      type="button"
+                      className="secondary-button compact-action"
+                      onClick={() => onBeginAdoption({
+                        field: category.field,
+                        label: category.label,
+                        observedValue: value,
+                        replacedValue: "",
+                      })}
+                    >
+                      Adopt into expectations
+                    </button>
+                  ) : null}
+                </div>
               ))}
               {category.removed.map((value) => (
-                <span key={`removed-${value}`}>
+                <span className="project-drift-readonly-row" key={`removed-${value}`}>
                   <em>{expectation ? "Approved, not observed" : "Removed"}</em>
                   <code>{value}</code>
                 </span>
@@ -369,6 +455,35 @@ function DriftSection({ title, description, section, expectation }) {
         </div>
       ) : null}
     </article>
+  );
+}
+
+function AdoptionPreview({ preview, onConfirm, onCancel }) {
+  return (
+    <section className="project-drift-adoption-preview" aria-labelledby="project-drift-adoption-title">
+      <div>
+        <h4 id="project-drift-adoption-title">Adoption preview: {preview.label}</h4>
+        <p>Only this approved expectation will change. Scan observations and security analysis remain unchanged.</p>
+      </div>
+      <div className="project-drift-preview-values">
+        <PreviewValues title="Values being added" values={preview.added} />
+        <PreviewValues title="Values being removed or replaced" values={preview.removedOrReplaced} />
+        <PreviewValues title="Resulting approved expectation values" values={preview.resultingApprovedValues} />
+      </div>
+      <div className="actions">
+        <button type="button" onClick={onConfirm}>Confirm adoption</button>
+        <button type="button" className="secondary-button" onClick={onCancel}>Cancel</button>
+      </div>
+    </section>
+  );
+}
+
+function PreviewValues({ title, values }) {
+  return (
+    <div>
+      <strong>{title}</strong>
+      {values.length > 0 ? values.map((value) => <code key={value}>{value}</code>) : <span>None</span>}
+    </div>
   );
 }
 
