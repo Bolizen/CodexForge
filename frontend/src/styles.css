@@ -4063,6 +4063,178 @@ label,
 
 }
 
+.scan-comparison {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+.scan-comparison-picker,
+.scan-comparison-overview,
+.scan-comparison-card {
+  min-width: 0;
+}
+
+.scan-comparison-selectors,
+.scan-comparison-selection-summary,
+.scan-comparison-sections {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.scan-comparison-selectors label {
+  color: var(--color-text-muted);
+  display: grid;
+  font-size: 0.78rem;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.scan-comparison-selectors select {
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text);
+  max-width: 100%;
+  min-width: 0;
+  padding: 0.65rem;
+  width: 100%;
+}
+
+.scan-comparison-selection-summary {
+  margin-top: var(--space-3);
+}
+
+.scan-comparison-selection-summary article {
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  padding: var(--space-3);
+}
+
+.scan-comparison-selection-summary article > span,
+.scan-comparison-selection-summary small,
+.comparison-status-detail {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+.scan-comparison-selection-summary strong,
+.scan-comparison-selection-summary time {
+  overflow-wrap: anywhere;
+}
+
+.scan-comparison-actions,
+.comparison-card-heading {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: space-between;
+  margin-top: var(--space-3);
+}
+
+.scan-comparison-overview {
+  align-items: start;
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: minmax(180px, 0.55fr) minmax(0, 1.45fr);
+}
+
+.scan-comparison-overview .scan-comparison-selection-summary {
+  margin-top: 0;
+}
+
+.scan-comparison-card {
+  align-content: start;
+}
+
+.comparison-card-heading {
+  margin-top: 0;
+}
+
+.comparison-status {
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  color: var(--color-text-muted);
+  font-size: 0.72rem;
+  padding: 0.28rem 0.58rem;
+  white-space: nowrap;
+}
+
+.comparison-status-comparable {
+  border-color: rgba(52, 211, 153, 0.45);
+  color: var(--color-success);
+}
+
+.comparison-status-partially-comparable,
+.comparison-status-indeterminate {
+  border-color: rgba(251, 191, 36, 0.45);
+  color: var(--color-warning);
+}
+
+.comparison-counts,
+.coverage-comparison-grid {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  margin-top: var(--space-3);
+}
+
+.comparison-counts > div,
+.coverage-comparison-grid > div {
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+  padding: var(--space-2);
+}
+
+.comparison-counts span,
+.coverage-comparison-grid span,
+.coverage-comparison-grid small {
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  overflow-wrap: anywhere;
+}
+
+.comparison-examples,
+.project-metadata-comparison-list,
+.comparison-metadata-bridge {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  min-width: 0;
+}
+
+.comparison-examples > div,
+.project-metadata-comparison-list article,
+.comparison-metadata-bridge {
+  border-top: 1px solid var(--color-border-subtle);
+  display: grid;
+  gap: var(--space-1);
+  padding-top: var(--space-2);
+}
+
+.comparison-examples ul {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.comparison-examples li,
+.project-metadata-comparison-list span,
+.project-metadata-comparison-list small,
+.comparison-metadata-bridge span {
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 780px) {
   .workspace {
     padding: 18px 14px;
@@ -4369,5 +4541,21 @@ label,
 
   .project-activity-heading .history-view-button {
     align-self: flex-start;
+  }
+
+  .scan-comparison-selectors,
+  .scan-comparison-selection-summary,
+  .scan-comparison-sections,
+  .scan-comparison-overview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .scan-comparison-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .scan-comparison-actions button {
+    width: 100%;
   }
 }

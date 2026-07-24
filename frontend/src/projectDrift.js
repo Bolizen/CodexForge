@@ -98,6 +98,30 @@ export function buildProjectDriftSummary({ scans, profile, currentScanId } = {})
   };
 }
 
+export function compareProjectMetadataScans(baseScan, targetScan) {
+  const base = snapshotForScan(baseScan);
+  const target = snapshotForScan(targetScan);
+  if (!base.reliable || !target.reliable) {
+    return unavailableSection(
+      "indeterminate",
+      [
+        !base.reliable ? `Base scan: ${base.reason}` : "",
+        !target.reliable ? `Target scan: ${target.reason}` : "",
+      ].filter(Boolean).join(" "),
+    );
+  }
+  const categories = PROJECT_EXPECTATION_FIELDS.map(({ field, label }) => (
+    compareCategory(field, label, base.values[field], target.values[field])
+  ));
+  const counts = aggregateCounts(categories);
+  return {
+    status: "comparable",
+    message: "Observed project metadata is comparable across both selected scans.",
+    counts,
+    categories,
+  };
+}
+
 function buildExpectationDrift(current, profile) {
   if (!current.reliable) {
     return unavailableSection(
@@ -248,7 +272,8 @@ function compareCategory(field, label, previous, current) {
     changed: changed.slice(0, MAX_DRIFT_DETAILS_PER_CATEGORY),
     omittedDetailCount: Math.max(
       0,
-      counts.added + counts.removed + counts.changed
+      counts.unchanged + counts.added + counts.removed + counts.changed
+        - Math.min(counts.unchanged, MAX_DRIFT_DETAILS_PER_CATEGORY)
         - Math.min(counts.added, MAX_DRIFT_DETAILS_PER_CATEGORY)
         - Math.min(counts.removed, MAX_DRIFT_DETAILS_PER_CATEGORY)
         - Math.min(counts.changed, MAX_DRIFT_DETAILS_PER_CATEGORY),

@@ -6,6 +6,7 @@ export const VALID_SECTIONS = Object.freeze([
   "projects",
   "trustProfiles",
   "activity",
+  "scanComparison",
   "reports",
   "changelog",
   "settings",

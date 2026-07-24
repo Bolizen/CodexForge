@@ -2,6 +2,16 @@ from __future__ import annotations
 
 CHANGELOG_ENTRIES = [
     {
+        "version": "0.6.5",
+        "title": "Explicit scan comparison",
+        "changes": [
+            "Added a read-only Scan Comparison view for two explicitly selected scans from the same project.",
+            "Compared persisted findings, normalized dependency inventories, exact available coverage counts, and all seven expectation-backed metadata categories.",
+            "Added independent Comparable, Partially comparable, Indeterminate, and Unavailable reliability states that never infer removals or resolutions from incomplete scans.",
+            "Kept comparisons bounded, conservatively renderable, chronologically ordered, and free of scan, review, expectation, dependency-approval, trust, or activity mutations.",
+        ],
+    },
+    {
         "version": "0.6.4",
         "title": "Project activity timeline",
         "changes": [

@@ -1,6 +1,18 @@
-# Glacial 0.6.4 Project Activity Timeline
+# Glacial 0.6.5 Explicit Scan Comparison
 
-Glacial 0.6.4 adds a compact, read-only history of meaningful persisted activity for the selected project.
+Glacial 0.6.5 adds a bounded, read-only workflow for comparing two explicitly selected scans from the same project.
+
+## Explicit scan comparison
+
+- Lets users select distinct base and target scans, shows their timestamps, identifiers, completion, and reliability state, and orders the result chronologically even when selected in reverse.
+- Compares persisted findings using stable scanner identity with conservative secondary matching for meaningful severity, category, detector, path, and evidence changes.
+- Compares normalized dependency inventories for additions, removals, and version changes while withholding removal claims from incomplete or malformed analysis.
+- Compares exact persisted coverage counts and marks missing, malformed, or internally inconsistent metrics Indeterminate instead of assuming zero.
+- Reuses the Project Expectations drift normalization and deterministic pairing semantics across package managers, manifests, lockfiles, lifecycle scripts, ecosystems, reviewed paths, and ignored paths.
+- Reports Comparable, Partially comparable, Indeterminate, or Unavailable independently for each section and never hides an indeterminate subsection behind a successful overall result.
+- Creates no comparison records, findings, review decisions, dependency approvals, Project Expectations updates, project activity, or other project-state changes.
+
+## Project activity timeline
 
 ## Project activity timeline
 

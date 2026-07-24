@@ -39,6 +39,12 @@ from .dependency_trust import SCHEMA_VERSION as DEPENDENCY_TRUST_SCHEMA_VERSION
 from .finding_reviews import enrich_scan, finding_fingerprint, valid_fingerprint
 from .safety import configured_root, ensure_inside_root, ensure_project_directory, existing_workspace_root, has_multiple_hardlinks, sanitize_folder_name
 from .scanner import scan_project
+from .scan_comparison import (
+    MAX_COMPARISON_OPTIONS_OFFSET,
+    MAX_COMPARISON_OPTIONS_PAGE,
+    compare_scan_rows,
+    comparison_options_page,
+)
 from .schemas import AgentPreviewRequest, FindingReviewDelete, FindingReviewRequest, NoteCreate, ProjectCreate, ProjectMetadataUpdate, ProjectPathRequest, ProjectRegister, ProjectRootUpdate, TrustProfileRequest, TrustedDependencyBaselineApprove, TrustedDependencyBaselineNote
 from .trusted_dependency_baseline import BASELINE_SCHEMA_VERSION, BaselineError, approval_for_analysis, enrich_scan as enrich_trusted_baseline, public_baseline, snapshot_from_analysis, snapshot_json, valid_fingerprint as valid_baseline_fingerprint
 
@@ -414,6 +420,49 @@ def scan_history(project_path: str = Query(min_length=1, max_length=1000)) -> di
     reviews = _finding_reviews(str(project))
     baseline = _trusted_baseline_row(str(project))
     return {"scans": [enrich_trusted_baseline(enrich_scan(row_to_scan(row), reviews), baseline) for row in rows]}
+
+
+@app.get("/api/scans/comparison-options")
+def scan_comparison_options(
+    project_path: str = Query(min_length=1, max_length=1000),
+    limit: Annotated[int, Query(ge=1, le=MAX_COMPARISON_OPTIONS_PAGE)] = 100,
+    offset: Annotated[int, Query(ge=0, le=MAX_COMPARISON_OPTIONS_OFFSET)] = 0,
+) -> dict[str, object]:
+    project = _ensure_project(project_path)
+    with get_connection() as connection:
+        rows = connection.execute(
+            "SELECT * FROM scans WHERE project_path = ? "
+            "ORDER BY scan_date DESC, id DESC LIMIT ? OFFSET ?",
+            (str(project), limit + 1, offset),
+        ).fetchall()
+    return comparison_options_page(rows, limit=limit, offset=offset)
+
+
+@app.get("/api/scans/compare")
+def compare_scans(
+    project_path: str = Query(min_length=1, max_length=1000),
+    first_scan_id: Annotated[int, Query(gt=0)] = ...,
+    second_scan_id: Annotated[int, Query(gt=0)] = ...,
+) -> dict[str, object]:
+    project = _ensure_project(project_path)
+    if first_scan_id == second_scan_id:
+        raise HTTPException(status_code=400, detail="Select two different scans to compare.")
+    with get_connection() as connection:
+        rows = connection.execute(
+            "SELECT * FROM scans WHERE id IN (?, ?)",
+            (first_scan_id, second_scan_id),
+        ).fetchall()
+    rows_by_id = {row["id"]: row for row in rows}
+    missing = [
+        scan_id
+        for scan_id in (first_scan_id, second_scan_id)
+        if scan_id not in rows_by_id
+    ]
+    if missing:
+        raise HTTPException(status_code=404, detail="One or more selected scans were not found.")
+    if any(row["project_path"] != str(project) for row in rows):
+        raise HTTPException(status_code=403, detail="Selected scans must belong to the selected project.")
+    return compare_scan_rows(rows_by_id[first_scan_id], rows_by_id[second_scan_id])
 
 
 @app.get("/api/activity")

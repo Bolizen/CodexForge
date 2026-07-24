@@ -102,6 +102,47 @@ test("restores a valid project, section, historical scan, and panel state once",
   assert.equal(fetchHarness.count("/api/notes"), 1);
 });
 
+test("Scan Comparison selects two scans and renders conservative read-only section results", async () => {
+  storeSession({
+    selectedProjectPath: PROJECT_A_PATH,
+    activeSection: "scanComparison",
+  });
+  const base = withCompleteness({
+    ...scan(201, "low", "2026-07-11T09:30:00Z"),
+    manifests: ["package.json"],
+    dependencyTrust: dependencyTrustFixture(),
+    scanMetadataReliable: true,
+  }, { complete: true });
+  const target = withCompleteness({
+    ...scan(202, "medium", "2026-07-12T09:30:00Z"),
+    manifests: ["pyproject.toml"],
+    dependencyTrust: dependencyTrustFixture(),
+    scanMetadataReliable: true,
+  }, { complete: true });
+  await renderApp();
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), { scans: [target, base] });
+
+  assert.equal(document.querySelector(".topbar h1").textContent, "Scan Comparison");
+  assert.match(document.querySelector(".scan-comparison-picker").textContent, /Scan #201/);
+  assert.match(document.querySelector(".scan-comparison-picker").textContent, /Scan #202/);
+  await click(buttonWithText("Compare scans"));
+  const request = await fetchHarness.next("/api/scans/compare", { projectPath: PROJECT_A_PATH });
+  assert.equal(request.url.searchParams.get("first_scan_id"), "201");
+  assert.equal(request.url.searchParams.get("second_scan_id"), "202");
+  await respond(request, comparisonResponse(base, target));
+
+  const view = document.querySelector(".scan-comparison");
+  assert.match(view.textContent, /Overall comparison reliability/);
+  assert.match(view.textContent, /Partially comparable/);
+  assert.match(view.textContent, /Findings/);
+  assert.match(view.textContent, /Dependencies/);
+  assert.match(view.textContent, /Coverage/);
+  assert.match(view.textContent, /Project metadata/);
+  assert.match(view.textContent, /package\.json → pyproject\.toml/);
+  assert.equal(fetchHarness.count("/api/activity"), 1, "comparison must not create or refresh activity");
+  assert.equal(fetchHarness.count("/api/scans/compare", "POST"), 0);
+});
+
 test("Project Expectations drift summary survives navigation and saved-section restoration", async () => {
   storeSession({
     selectedProjectPath: PROJECT_A_PATH,
@@ -1865,14 +1906,15 @@ async function renderReadyProjectA() {
 
 async function takeDetailRequests(projectPath) {
   const options = { projectPath };
-  const [notes, scanHistory, trustProfile, activity, agentsExists] = await Promise.all([
+  const [notes, scanHistory, trustProfile, activity, comparisonOptions, agentsExists] = await Promise.all([
     fetchHarness.next("/api/notes", options),
     fetchHarness.next("/api/scans/history", options),
     fetchHarness.next("/api/trust-profile", options),
     fetchHarness.next("/api/activity", options),
+    fetchHarness.next("/api/scans/comparison-options", options),
     fetchHarness.next("/api/agents/exists", options),
   ]);
-  return { notes, scanHistory, trustProfile, activity, agentsExists };
+  return { notes, scanHistory, trustProfile, activity, comparisonOptions, agentsExists };
 }
 
 async function resolveDetails(requests, options = {}) {
@@ -1883,6 +1925,16 @@ async function resolveDetails(requests, options = {}) {
     scanHistory: { scans: options.scans || [] },
     trustProfile: options.trustProfile || { project_path: requestProjectPath(requests.trustProfile) },
     activity: options.activity || { events: [], has_more: false, next_offset: null },
+    comparisonOptions: options.comparisonOptions || {
+      scans: (options.scans || []).map((scan) => ({
+        id: scan.id,
+        scanDate: scan.scan_date,
+        completionState: scan.scanCompleteness?.complete === true ? "complete" : "unknown",
+        reliabilityStatus: scan.scanMetadataReliable === true ? "reliable" : "indeterminate",
+      })),
+      hasMore: false,
+      nextOffset: null,
+    },
     agentsExists: { exists: Boolean(options.agentsExists) },
   };
   await act(async () => {
@@ -2218,6 +2270,62 @@ function scan(id, risk, date) {
     ignoredFiles: [],
     reviewedFiles: [],
     zone: "Source",
+  };
+}
+
+function comparisonResponse(base, target) {
+  const summary = (value) => ({
+    id: value.id,
+    scanDate: value.scan_date,
+    completionState: "complete",
+    reliabilityStatus: "reliable",
+    metadataSource: {
+      reliable: true,
+      scan: {
+        manifests: value.manifests,
+        lockfiles: value.lockfiles,
+        lifecycleScripts: value.lifecycleScripts,
+        ignoredFiles: value.ignoredFiles,
+        reviewedFiles: value.reviewedFiles,
+        scanCompleteness: value.scanCompleteness,
+        scanMetadataReliable: true,
+        dependencyTrust: value.dependencyTrust,
+      },
+    },
+  });
+  return {
+    baseScan: summary(base),
+    targetScan: summary(target),
+    overallStatus: "partially-comparable",
+    sections: {
+      findings: {
+        status: "comparable",
+        message: "Persisted findings are comparable.",
+        counts: { added: 1, resolved: 0, changed: 0, unchanged: 1 },
+        examples: { added: [{ type: "new-rule", severity: "medium", path: "src/new.js" }] },
+      },
+      dependencies: {
+        status: "comparable",
+        message: "Normalized dependency inventories are comparable.",
+        baseAnalysisStatus: "complete",
+        targetAnalysisStatus: "complete",
+        counts: { added: 0, removed: 0, versionChanged: 0, unchanged: 1 },
+        examples: {},
+      },
+      coverage: {
+        status: "partially-comparable",
+        message: "Files considered was not persisted.",
+        baseComplete: true,
+        targetComplete: true,
+        metrics: {
+          filesConsidered: { base: null, target: null, change: null },
+          filesScanned: { base: 1, target: 2, change: 1 },
+          skippedFiles: { base: 0, target: 0, change: 0 },
+          ignoredFiles: { base: 0, target: 0, change: 0 },
+          failedFiles: { base: 0, target: 0, change: 0 },
+        },
+      },
+    },
   };
 }
 

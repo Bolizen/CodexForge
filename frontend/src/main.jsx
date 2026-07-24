@@ -33,6 +33,15 @@ import {
   normalizeProjectExpectations,
 } from "./projectExpectations.js";
 import { buildProjectDriftSummary } from "./projectDrift.js";
+import {
+  comparisonCountLabel,
+  comparisonExampleLabel,
+  comparisonScanOptionLabel,
+  comparisonStatusLabel,
+  EMPTY_SCAN_COMPARISON,
+  normalizeComparisonOptionsPage,
+  normalizeScanComparison,
+} from "./scanComparison.js";
 import { shortBaselineFingerprint, trustedBaselineComparisonLabel } from "./trustedDependencyBaseline.js";
 import {
   isAbortError,
@@ -62,12 +71,13 @@ const EMPTY_AGENT_FORM = {
 };
 const MAJOR_SECTIONS = ["changelog", "scanReport", "agents", "notes", "history"];
 const OPEN_MAJOR_SECTIONS = Object.fromEntries(MAJOR_SECTIONS.map((section) => [section, true]));
-const PROJECT_REQUIRED_SECTIONS = new Set(["trustProfiles", "activity", "reports"]);
+const PROJECT_REQUIRED_SECTIONS = new Set(["trustProfiles", "activity", "scanComparison", "reports"]);
 const SECTION_NAV = [
   { id: "workspace", href: "#workspace-overview", label: "Workspace Overview", icon: "#" },
   { id: "projects", href: "#projects", label: "Projects", icon: "[]" },
   { id: "trustProfiles", href: "#project-expectations", label: "Project Expectations", icon: "<>" },
   { id: "activity", href: "#activity", label: "Activity", icon: "::" },
+  { id: "scanComparison", href: "#scan-comparison", label: "Scan Comparison", icon: "<=>" },
   { id: "reports", href: "#reports", label: "Reports", icon: "=" },
   { id: "changelog", href: "#changelog", label: "Changelog", icon: "@" },
   { id: "settings", href: "#settings", label: "Settings", icon: "*" },
@@ -107,6 +117,7 @@ export function App() {
   const [trustProfile, setTrustProfile] = useState(EMPTY_TRUST_PROFILE);
   const [trustProfileMessage, setTrustProfileMessage] = useState("");
   const [activity, setActivity] = useState(EMPTY_ACTIVITY_STATE);
+  const [scanComparison, setScanComparison] = useState(EMPTY_SCAN_COMPARISON);
   const [notes, setNotes] = useState([]);
   const [noteBody, setNoteBody] = useState("");
   const [changelog, setChangelog] = useState([]);
@@ -147,6 +158,8 @@ export function App() {
     scanHistory: 0,
     trustProfile: 0,
     activity: 0,
+    comparisonOptions: 0,
+    scanComparison: 0,
     agentsExists: 0,
     scanMutation: 0,
     noteMutation: 0,
@@ -221,6 +234,7 @@ export function App() {
       loadScanHistory(selectedPath, generation, controller.signal),
       loadTrustProfile(selectedPath, generation, controller.signal),
       loadActivity(selectedPath, generation, controller.signal),
+      loadComparisonOptions(selectedPath, generation, controller.signal),
       checkAgentsExists(selectedPath, generation, controller.signal),
     ]).then(() => {
       if (!controller.signal.aborted && projectRequestIsCurrent(selectedPath, generation)) {
@@ -293,6 +307,7 @@ export function App() {
     setTrustProfile({ ...EMPTY_TRUST_PROFILE, project_path: path });
     setTrustProfileMessage("");
     setActivity(EMPTY_ACTIVITY_STATE);
+    setScanComparison(EMPTY_SCAN_COMPARISON);
     setNotes([]);
     setNoteBody("");
     setCopyStatus("");
@@ -620,6 +635,7 @@ export function App() {
       }
       if (projectRequestIsCurrent(projectPath, generation)) {
         await loadActivity(projectPath, generation);
+        await loadComparisonOptions(projectPath, generation);
       }
       if (workspaceGenerationRef.current === workspaceGeneration) {
         await refreshProjects(projectPath, generation);
@@ -768,6 +784,90 @@ export function App() {
     const generation = projectGenerationRef.current;
     if (!projectPath || activity.loading || activity.nextOffset === null) return;
     await loadActivity(projectPath, generation, undefined, activity.nextOffset);
+  }
+
+  async function loadComparisonOptions(path, generation, signal, offset = 0) {
+    const requestId = beginScopedProjectRequest("comparisonOptions");
+    setScanComparison((current) => ({ ...current, loading: true, error: "" }));
+    try {
+      const data = await api(
+        `/api/scans/comparison-options?project_path=${encodeURIComponent(path)}&limit=100&offset=${offset}`,
+        { signal },
+      );
+      if (!scopedProjectRequestIsCurrent("comparisonOptions", requestId, path, generation)) return;
+      const page = normalizeComparisonOptionsPage(data);
+      setScanComparison((current) => {
+        const options = offset > 0
+          ? mergeScanOptions(current.options, page.scans)
+          : page.scans;
+        const defaultBase = current.baseScanId && options.some((scan) => scan.id === current.baseScanId)
+          ? current.baseScanId
+          : options[1]?.id ?? null;
+        const defaultTarget = current.targetScanId && options.some((scan) => scan.id === current.targetScanId)
+          ? current.targetScanId
+          : options[0]?.id ?? null;
+        return {
+          ...current,
+          options,
+          hasMoreOptions: page.hasMore,
+          nextOptionsOffset: page.nextOffset,
+          baseScanId: defaultBase === defaultTarget ? null : defaultBase,
+          targetScanId: defaultTarget,
+          loading: false,
+          error: "",
+        };
+      });
+    } catch (error) {
+      if (!isAbortError(error) && scopedProjectRequestIsCurrent("comparisonOptions", requestId, path, generation)) {
+        setScanComparison((current) => ({ ...current, loading: false, error: error.message }));
+      }
+    }
+  }
+
+  async function loadOlderComparisonOptions() {
+    const projectPath = selectedPathRef.current;
+    const generation = projectGenerationRef.current;
+    if (!projectPath || scanComparison.loading || scanComparison.nextOptionsOffset === null) return;
+    await loadComparisonOptions(projectPath, generation, undefined, scanComparison.nextOptionsOffset);
+  }
+
+  function selectComparisonScan(kind, value) {
+    const scanId = Number(value);
+    if (!Number.isSafeInteger(scanId) || scanId <= 0) return;
+    setScanComparison((current) => {
+      const other = kind === "base" ? current.targetScanId : current.baseScanId;
+      return {
+        ...current,
+        [kind === "base" ? "baseScanId" : "targetScanId"]: scanId === other ? null : scanId,
+        result: null,
+        error: "",
+      };
+    });
+  }
+
+  async function runSelectedScanComparison() {
+    const projectPath = selectedPathRef.current;
+    const generation = projectGenerationRef.current;
+    const { baseScanId, targetScanId } = scanComparison;
+    if (!projectPath || !baseScanId || !targetScanId || baseScanId === targetScanId) return;
+    const requestId = beginScopedProjectRequest("scanComparison");
+    setScanComparison((current) => ({ ...current, loading: true, error: "", result: null }));
+    try {
+      const data = await api(
+        `/api/scans/compare?project_path=${encodeURIComponent(projectPath)}&first_scan_id=${baseScanId}&second_scan_id=${targetScanId}`,
+      );
+      if (!scopedProjectRequestIsCurrent("scanComparison", requestId, projectPath, generation)) return;
+      setScanComparison((current) => ({
+        ...current,
+        result: normalizeScanComparison(data),
+        loading: false,
+        error: "",
+      }));
+    } catch (error) {
+      if (!isAbortError(error) && scopedProjectRequestIsCurrent("scanComparison", requestId, projectPath, generation)) {
+        setScanComparison((current) => ({ ...current, loading: false, error: error.message }));
+      }
+    }
   }
 
   async function saveTrustProfile(profile, activityContext = null) {
@@ -1054,6 +1154,7 @@ export function App() {
       "#project-expectations": "trustProfiles",
       "#trust-profiles": "trustProfiles",
       "#activity": "activity",
+      "#scan-comparison": "scanComparison",
       "#reports": "reports",
       "#changelog": "changelog",
       "#settings": "settings",
@@ -1239,6 +1340,15 @@ export function App() {
               availableScanIds={new Set(scanHistory.map((scan) => scan.id))}
               onLoadOlder={loadOlderActivity}
               onOpenScan={openActivityScan}
+            />
+          ) : null}
+
+          {selectedSection === "scanComparison" && selectedProject && !projectDetailsLoading ? (
+            <ScanComparisonView
+              state={scanComparison}
+              onSelectScan={selectComparisonScan}
+              onCompare={runSelectedScanComparison}
+              onLoadOlder={loadOlderComparisonOptions}
             />
           ) : null}
 
@@ -1792,6 +1902,269 @@ function ActivityTimeline({ activity, availableScanIds, onLoadOlder, onOpenScan 
       ) : activity.loading && activity.events.length === 0 ? <p className="muted">Loading activity...</p> : null}
     </section>
   );
+}
+
+function ScanComparisonView({ state, onSelectScan, onCompare, onLoadOlder }) {
+  const canCompare = state.options.length >= 2
+    && state.baseScanId
+    && state.targetScanId
+    && state.baseScanId !== state.targetScanId
+    && !state.loading;
+  const selectedBase = state.options.find((scan) => scan.id === state.baseScanId) || null;
+  const selectedTarget = state.options.find((scan) => scan.id === state.targetScanId) || null;
+  return (
+    <section className="scan-comparison" id="scan-comparison" aria-labelledby="scan-comparison-title">
+      <section className="panel scan-comparison-picker">
+        <div className="panel-heading">
+          <div>
+            <h2 id="scan-comparison-title">Compare scans</h2>
+            <p className="muted">Choose two saved scans from this project. Comparison is read-only and creates no activity.</p>
+          </div>
+        </div>
+        {state.options.length < 2 && !state.loading ? (
+          <div className="empty-state compact">
+            <strong>At least two scans are required.</strong>
+            <p>Run another scan before comparing saved evidence.</p>
+          </div>
+        ) : (
+          <>
+            <div className="scan-comparison-selectors">
+              <label>
+                Older / base scan
+                <select value={state.baseScanId || ""} onChange={(event) => onSelectScan("base", event.target.value)}>
+                  <option value="">Select a base scan</option>
+                  {state.options.map((scan) => (
+                    <option value={scan.id} disabled={scan.id === state.targetScanId} key={`base-${scan.id}`}>
+                      {comparisonScanOptionLabel(scan)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Newer / target scan
+                <select value={state.targetScanId || ""} onChange={(event) => onSelectScan("target", event.target.value)}>
+                  <option value="">Select a target scan</option>
+                  {state.options.map((scan) => (
+                    <option value={scan.id} disabled={scan.id === state.baseScanId} key={`target-${scan.id}`}>
+                      {comparisonScanOptionLabel(scan)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div className="scan-comparison-selection-summary">
+              <ScanSelectionSummary label="Base" scan={selectedBase} />
+              <ScanSelectionSummary label="Target" scan={selectedTarget} />
+            </div>
+            <div className="scan-comparison-actions">
+              <button type="button" className="secondary-button compact-action" onClick={onCompare} disabled={!canCompare}>
+                {state.loading ? "Comparing..." : "Compare scans"}
+              </button>
+              {state.hasMoreOptions ? (
+                <button type="button" className="history-view-button" onClick={onLoadOlder} disabled={state.loading}>
+                  Load older scans
+                </button>
+              ) : null}
+            </div>
+          </>
+        )}
+        {state.error ? <p className="notice">{state.error}</p> : null}
+        {state.loading && state.options.length === 0 ? <p className="muted">Loading saved scans...</p> : null}
+      </section>
+      {state.result ? <ScanComparisonResult result={state.result} /> : null}
+    </section>
+  );
+}
+
+function ScanSelectionSummary({ label, scan }) {
+  return (
+    <article>
+      <span>{label}</span>
+      {scan ? (
+        <>
+          <strong>Scan #{scan.id}</strong>
+          <time dateTime={scan.scanDate || undefined}>{formatDate(scan.scanDate)}</time>
+          <small>{comparisonStatusText(scan)}</small>
+        </>
+      ) : <strong>Not selected</strong>}
+    </article>
+  );
+}
+
+function ScanComparisonResult({ result }) {
+  const metadata = result.sections.projectMetadata;
+  const dependencyMetadata = metadata.categories.filter((category) => (
+    ["trustedPackageManagers", "expectedManifestFiles", "allowedLifecycleScripts"].includes(category.field)
+  ));
+  return (
+    <>
+      <section className="panel scan-comparison-overview">
+        <div>
+          <span className="guided-review-eyebrow">Overall comparison reliability</span>
+          <h2>{comparisonStatusLabel(result.overallStatus)}</h2>
+        </div>
+        <div className="scan-comparison-selection-summary">
+          <ScanSelectionSummary label="Base" scan={result.baseScan} />
+          <ScanSelectionSummary label="Target" scan={result.targetScan} />
+        </div>
+      </section>
+      <div className="scan-comparison-sections">
+        <ComparisonSectionCard title="Findings" section={result.sections.findings}>
+          <ComparisonCounts counts={result.sections.findings.counts} labels={{
+            added: "Added",
+            resolved: "Resolved",
+            changed: "Changed",
+            unchanged: "Unchanged",
+          }} />
+          <ComparisonExamples section={result.sections.findings} type="finding" />
+        </ComparisonSectionCard>
+        <ComparisonSectionCard title="Dependencies" section={result.sections.dependencies}>
+          <p className="comparison-status-detail">
+            Analysis: {result.sections.dependencies.baseAnalysisStatus || "unknown"} → {result.sections.dependencies.targetAnalysisStatus || "unknown"}
+          </p>
+          <ComparisonCounts counts={result.sections.dependencies.counts} labels={{
+            added: "Added",
+            removed: "Removed",
+            versionChanged: "Version changed",
+            unchanged: "Unchanged",
+          }} />
+          <ComparisonExamples section={result.sections.dependencies} type="dependency" />
+          {dependencyMetadata.length ? (
+            <div className="comparison-metadata-bridge">
+              <strong>Package-manager, manifest, and lifecycle-script changes</strong>
+              {dependencyMetadata.map((category) => (
+                <span key={category.field}>
+                  {category.label}: {category.counts.added} added, {category.counts.removed} removed, {category.counts.changed} changed
+                  <MetadataCategoryExamples category={category} />
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </ComparisonSectionCard>
+        <ComparisonSectionCard title="Coverage" section={result.sections.coverage}>
+          <div className="coverage-comparison-grid">
+            {Object.entries(result.sections.coverage.metrics).map(([key, metric]) => (
+              <div key={key}>
+                <span>{coverageMetricLabel(key)}</span>
+                <strong>{comparisonCountLabel(metric.base)} → {comparisonCountLabel(metric.target)}</strong>
+                <small>{metric.change === null ? "Indeterminate" : signedCount(metric.change)}</small>
+              </div>
+            ))}
+          </div>
+          <p className="comparison-status-detail">
+            Completion: {completionLabel(result.sections.coverage.baseComplete)} → {completionLabel(result.sections.coverage.targetComplete)}
+          </p>
+        </ComparisonSectionCard>
+        <ComparisonSectionCard title="Project metadata" section={metadata}>
+          <ComparisonCounts counts={metadata.counts} labels={{
+            added: "Added",
+            removed: "Removed",
+            changed: "Changed",
+            unchanged: "Unchanged",
+            unavailable: "Unavailable",
+          }} />
+          <div className="project-metadata-comparison-list">
+            {metadata.categories.map((category) => (
+              <article key={category.field}>
+                <strong>{category.label}</strong>
+                <span>{category.counts.added} added · {category.counts.removed} removed · {category.counts.changed} changed · {category.counts.unchanged} unchanged</span>
+                <MetadataCategoryExamples category={category} />
+              </article>
+            ))}
+          </div>
+        </ComparisonSectionCard>
+      </div>
+    </>
+  );
+}
+
+function ComparisonSectionCard({ title, section, children }) {
+  return (
+    <section className="panel scan-comparison-card">
+      <div className="comparison-card-heading">
+        <h2>{title}</h2>
+        <span className={`comparison-status comparison-status-${section.status}`}>
+          {comparisonStatusLabel(section.status)}
+        </span>
+      </div>
+      <p>{section.message || "Comparison detail is unavailable."}</p>
+      {children}
+    </section>
+  );
+}
+
+function ComparisonCounts({ counts = {}, labels }) {
+  return (
+    <div className="comparison-counts">
+      {Object.entries(labels).map(([key, label]) => (
+        <div key={key}>
+          <span>{label}</span>
+          <strong>{comparisonCountLabel(counts[key])}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ComparisonExamples({ section, type }) {
+  const groups = Object.entries(section.examples || {}).filter(([, examples]) => examples.length);
+  if (!groups.length) return null;
+  return (
+    <div className="comparison-examples">
+      {groups.map(([group, examples]) => (
+        <div key={group}>
+          <strong>{comparisonGroupLabel(group)}</strong>
+          <ul>
+            {examples.map((example, index) => (
+              <li key={`${group}-${index}`}>{comparisonExampleLabel(example, type)}</li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MetadataCategoryExamples({ category }) {
+  const values = [
+    ...category.added.map((value) => `Added: ${value}`),
+    ...category.removed.map((value) => `Removed: ${value}`),
+    ...category.changed.map((value) => `Changed: ${value.before} → ${value.after}`),
+    ...category.unchanged.map((value) => `Unchanged: ${value}`),
+  ];
+  if (!values.length && !category.omittedDetailCount) return null;
+  return (
+    <small>
+      {values.slice(0, 10).join(" · ")}
+      {category.omittedDetailCount ? ` · ${category.omittedDetailCount} more omitted` : ""}
+    </small>
+  );
+}
+
+function comparisonStatusText(scan) {
+  return `${scan.completionState || "unknown"} · ${scan.reliabilityStatus || "indeterminate"}`;
+}
+
+function comparisonGroupLabel(value) {
+  return String(value).replace(/([A-Z])/g, " $1").replace(/^./, (character) => character.toUpperCase());
+}
+
+function coverageMetricLabel(value) {
+  return {
+    filesConsidered: "Files considered",
+    filesScanned: "Files scanned",
+    skippedFiles: "Skipped files",
+    ignoredFiles: "Ignored files",
+    failedFiles: "Unreadable / failed files",
+  }[value] || comparisonGroupLabel(value);
+}
+
+function completionLabel(value) {
+  return value === true ? "Complete" : value === false ? "Incomplete" : "Indeterminate";
+}
+
+function signedCount(value) {
+  return value > 0 ? `+${value}` : String(value);
 }
 
 function Changelog({ entries, open, onOpenChange }) {
@@ -2736,6 +3109,17 @@ function mergeActivityEvents(current, next) {
     events.push(event);
   }
   return events;
+}
+
+function mergeScanOptions(current, next) {
+  const scans = [...current];
+  const seen = new Set(current.map((scan) => scan.id));
+  for (const scan of next) {
+    if (seen.has(scan.id)) continue;
+    seen.add(scan.id);
+    scans.push(scan);
+  }
+  return scans;
 }
 
 function buildScanReport(result) {
