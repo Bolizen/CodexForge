@@ -1710,6 +1710,169 @@ test("Project Expectations fails conservatively for malformed legacy data and in
   assert.doesNotMatch(document.querySelector(".project-drift-summary").textContent, /Adopt into expectations/);
 });
 
+test("review checkpoint renders eligible evidence, confirms explicitly, and becomes current without duplication", async () => {
+  const current = {
+    ...withCompleteness(scan(96, "low", "2026-08-01T12:00:00Z"), { complete: true }),
+    manifests: ["package.json"],
+    lockfiles: ["package-lock.json"],
+    reviewedFiles: ["package.json", "package-lock.json"],
+    scanMetadataReliable: true,
+    dependencyTrust: dependencyTrustFixture({
+      trustedBaseline: configuredTrustedBaseline("identical"),
+      comparison: { baselineStatus: "unavailable", changeCount: 0, changes: [] },
+    }),
+  };
+  const profile = {
+    project_path: PROJECT_A_PATH,
+    trustedPackageManagers: ["npm", "pip"],
+    expectedManifestFiles: ["package.json"],
+    expectedLockfiles: ["package-lock.json"],
+    expectedEcosystems: ["node", "python"],
+    reviewedPaths: ["package.json", "package-lock.json"],
+  };
+  const checkpoints = checkpointPageFixture(current);
+  checkpoints.currentEvidence.readyForCheckpoint = true;
+  checkpoints.currentEvidence.expectationsConfigured = true;
+  checkpoints.currentEvidence.expectationsMatch = true;
+  checkpoints.currentEvidence.dependencyApprovalFingerprint = `cfdb2_${"b".repeat(64)}`;
+  checkpoints.currentEvidence.dependencyApprovalState = "approved";
+  checkpoints.currentEvidence.findingReviewComplete = true;
+
+  await renderApp();
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), {
+    scans: [current],
+    trustProfile: profile,
+    reviewCheckpoints: checkpoints,
+  });
+
+  const section = document.querySelector(".review-checkpoint");
+  assert.ok(section);
+  assert.match(section.textContent, /No checkpoint/);
+  assert.match(section.textContent, /not approval, certification, or a security guarantee/i);
+  assert.ok(buttonWithText("Record reviewed checkpoint"));
+
+  await click(buttonWithText("Record reviewed checkpoint"));
+  let dialog = document.querySelector(".review-checkpoint-confirmation");
+  assert.ok(dialog);
+  assert.match(dialog.textContent, /Latest scan/);
+  assert.match(dialog.textContent, /Project Expectations/);
+  assert.match(dialog.textContent, /Dependency approval/);
+  assert.match(dialog.textContent, /Finding review/);
+  assert.match(dialog.textContent, /Coverage and metadata/);
+  await click([...dialog.querySelectorAll("button")].find((button) => button.textContent === "Cancel"));
+  assert.equal(fetchHarness.count("/api/review-checkpoints", "POST"), 0);
+
+  await click(buttonWithText("Record reviewed checkpoint"));
+  dialog = document.querySelector(".review-checkpoint-confirmation");
+  await click([...dialog.querySelectorAll("button")].find((button) => button.textContent.includes("Confirm manual")));
+  const request = await fetchHarness.next("/api/review-checkpoints", { method: "POST" });
+  assert.deepEqual(request.body, {
+    project_path: PROJECT_A_PATH,
+    scan_id: current.id,
+    expected_evidence_fingerprint: checkpoints.currentEvidence.evidenceFingerprint,
+    security_status: "ready",
+    evaluator_version: 1,
+    provenance: "manual",
+  });
+  const recorded = {
+    ...checkpoints,
+    state: {
+      id: "current",
+      label: "Current",
+      reasons: ["The latest checkpoint corresponds exactly to the current normalized evidence."],
+    },
+    history: [{
+      checkpointId: "rcp_one",
+      projectId: PROJECT_A_PATH,
+      scanId: current.id,
+      baselineScanId: null,
+      baselineProvenance: "none",
+      createdAt: "2026-08-01T12:30:00Z",
+      provenance: "manual",
+      checkpointSchemaVersion: 1,
+      evaluatorVersion: 1,
+      evidenceFingerprint: checkpoints.currentEvidence.evidenceFingerprint,
+      malformed: false,
+    }],
+    created: true,
+    activityRecorded: true,
+  };
+  await respond(request, recorded);
+  const activityRequest = await fetchHarness.next("/api/activity", { projectPath: PROJECT_A_PATH });
+  await respond(activityRequest, { events: [], has_more: false, next_offset: null });
+
+  assert.match(document.querySelector(".review-checkpoint").textContent, /Current/);
+  assert.match(document.querySelector(".review-checkpoint").textContent, /no duplicate checkpoint is needed/i);
+  assert.equal([...document.querySelectorAll("button")].some((button) => button.textContent === "Record reviewed checkpoint"), false);
+});
+
+test("review checkpoint shows bounded stale and malformed reasons without an override action", async () => {
+  const current = {
+    ...withCompleteness(scan(97, "low", "2026-08-02T12:00:00Z"), { complete: true }),
+    scanMetadataReliable: true,
+    dependencyTrust: dependencyTrustFixture(),
+  };
+  const stale = checkpointPageFixture(current, {
+    state: {
+      id: "review-required",
+      label: "Review required",
+      reasons: [
+        "A different latest scan exists and has not been manually checkpointed.",
+        "Project Expectations changed.",
+        "Dependency analysis or approval evidence changed.",
+      ],
+    },
+    history: [{
+      checkpointId: "rcp_stale",
+      scanId: 96,
+      baselineScanId: null,
+      baselineProvenance: "none",
+      createdAt: "2026-08-01T12:30:00Z",
+      provenance: "manual",
+      evaluatorVersion: 1,
+      malformed: false,
+    }],
+  });
+
+  await renderApp();
+  await resolveDetails(await takeDetailRequests(PROJECT_A_PATH), {
+    scans: [current],
+    reviewCheckpoints: stale,
+  });
+  const section = document.querySelector(".review-checkpoint");
+  assert.match(section.textContent, /Review required/);
+  assert.match(section.textContent, /different latest scan/);
+  assert.match(section.textContent, /Project Expectations changed/);
+  assert.ok(buttonWithText("Review current evidence"));
+  assert.equal([...section.querySelectorAll("button")].some((button) => button.textContent.includes("Record")), false);
+
+  await selectProject("Project B");
+  const malformed = checkpointPageFixture(null, {
+    state: {
+      id: "indeterminate",
+      label: "Indeterminate",
+      reasons: ["The stored checkpoint contains malformed or unsupported evidence."],
+    },
+    history: [{
+      checkpointId: "rcp_malformed",
+      scanId: null,
+      baselineProvenance: "unknown",
+      createdAt: "",
+      provenance: "unknown",
+      evaluatorVersion: 999,
+      malformed: true,
+    }],
+  });
+  await resolveDetails(await takeDetailRequests(PROJECT_B_PATH), {
+    reviewCheckpoints: malformed,
+  });
+  const indeterminate = document.querySelector(".review-checkpoint");
+  assert.match(indeterminate.textContent, /Indeterminate/);
+  assert.match(indeterminate.textContent, /malformed or unsupported evidence/);
+  assert.equal([...indeterminate.querySelectorAll("button")].some((button) => button.textContent.includes("Record")), false);
+  assert.equal(fetchHarness.count("/api/review-checkpoints", "POST"), 0);
+});
+
 test("finding review and reopen update the real scan, history, and Markdown workflow", async () => {
   const finding = reviewableFinding("a");
   const current = scanWithFindings(81, [finding]);
@@ -1918,16 +2081,17 @@ async function renderReadyProjectA() {
 
 async function takeDetailRequests(projectPath) {
   const options = { projectPath };
-  const [notes, scanHistory, trustProfile, activity, comparisonOptions, trustedScanBaseline, agentsExists] = await Promise.all([
+  const [notes, scanHistory, trustProfile, activity, comparisonOptions, trustedScanBaseline, reviewCheckpoints, agentsExists] = await Promise.all([
     fetchHarness.next("/api/notes", options),
     fetchHarness.next("/api/scans/history", options),
     fetchHarness.next("/api/trust-profile", options),
     fetchHarness.next("/api/activity", options),
     fetchHarness.next("/api/scans/comparison-options", options),
     fetchHarness.next("/api/trusted-scan-baseline", options),
+    fetchHarness.next("/api/review-checkpoints", options),
     fetchHarness.next("/api/agents/exists", options),
   ]);
-  return { notes, scanHistory, trustProfile, activity, comparisonOptions, trustedScanBaseline, agentsExists };
+  return { notes, scanHistory, trustProfile, activity, comparisonOptions, trustedScanBaseline, reviewCheckpoints, agentsExists };
 }
 
 async function resolveDetails(requests, options = {}) {
@@ -1961,6 +2125,7 @@ async function resolveDetails(requests, options = {}) {
       isLatest: false,
       message: "No trusted scan baseline is configured. Automatic baseline selection remains active.",
     },
+    reviewCheckpoints: options.reviewCheckpoints || checkpointPageFixture(options.scans?.[0]),
     agentsExists: { exists: Boolean(options.agentsExists) },
   };
   await act(async () => {
@@ -2266,6 +2431,8 @@ function defaultResponse(request) {
       return { exists: false };
     case "/api/scans":
       return scan(99, "low", "2026-07-11T11:00:00Z");
+    case "/api/review-checkpoints":
+      return checkpointPageFixture();
     default:
       return {};
   }
@@ -2310,6 +2477,57 @@ function scan(id, risk, date) {
     ignoredFiles: [],
     reviewedFiles: [],
     zone: "Source",
+  };
+}
+
+function checkpointPageFixture(currentScan = null, overrides = {}) {
+  const hex = "a".repeat(64);
+  return {
+    state: {
+      id: "no-checkpoint",
+      label: "No checkpoint",
+      reasons: ["No manual project review checkpoint has been recorded."],
+    },
+    currentEvidence: currentScan ? {
+      reliable: true,
+      readyForCheckpoint: false,
+      projectId: currentScan.project_path,
+      scanId: currentScan.id,
+      scanTimestamp: currentScan.scan_date,
+      baselineScanId: null,
+      baselineProvenance: "none",
+      baselineComparisonState: "no-baseline",
+      expectationsFingerprint: `cpex1_${hex}`,
+      expectationsConfigured: false,
+      expectationsMatch: false,
+      dependencyAnalysisFingerprint: `cfdb2_${hex}`,
+      dependencyApprovalFingerprint: "",
+      dependencyApprovalState: "not-configured",
+      findingReviewsFingerprint: `cpfr1_${hex}`,
+      findingReviewComplete: false,
+      findingCount: currentScan.findings?.length || 0,
+      reviewedFindingCount: 0,
+      unresolvedCriticalCount: 0,
+      unresolvedHighCount: 0,
+      coverageFingerprint: `cpcov1_${hex}`,
+      coverageComplete: currentScan.scanCompleteness?.complete === true,
+      coverageIssueCount: currentScan.scanCompleteness?.issueCount || 0,
+      metadataReliable: currentScan.scanMetadataReliable === true,
+      checkpointSchemaVersion: 1,
+      evaluatorVersion: 1,
+      evidenceFingerprint: `cpr1_${hex}`,
+      reasons: [],
+    } : {
+      reliable: false,
+      readyForCheckpoint: false,
+      evaluatorVersion: 1,
+      evidenceFingerprint: "",
+      reasons: ["No current scan is available."],
+    },
+    history: [],
+    hasMore: false,
+    nextOffset: null,
+    ...overrides,
   };
 }
 

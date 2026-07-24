@@ -9,6 +9,7 @@ export const SECURITY_STATUS_LABELS = Object.freeze({
   insufficient: "Insufficient evidence",
   blocked: "Blocked by incomplete scan",
 });
+export const SECURITY_STATUS_EVALUATOR_VERSION = 1;
 
 const SECTION_LABELS = {
   coverage: "Scan coverage",
@@ -408,6 +409,7 @@ function summary(status, scan, trustedBaseline, sections, actions) {
   return {
     status,
     label: SECURITY_STATUS_LABELS[status],
+    evaluatorVersion: SECURITY_STATUS_EVALUATOR_VERSION,
     interpretation: {
       ready: "Available persisted evidence has been reviewed sufficiently to proceed cautiously.",
       review: "Reliable evidence exists, but meaningful review work remains.",

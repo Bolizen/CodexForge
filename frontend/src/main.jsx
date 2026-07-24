@@ -35,6 +35,12 @@ import {
 import { buildProjectDriftSummary } from "./projectDrift.js";
 import { buildProjectSecurityStatus } from "./projectSecurityStatus.js";
 import {
+  buildReviewCheckpointPreview,
+  EMPTY_REVIEW_CHECKPOINTS,
+  normalizeReviewCheckpointPage,
+  reviewCheckpointEligibility,
+} from "./reviewCheckpoints.js";
+import {
   comparisonCountLabel,
   comparisonExampleLabel,
   comparisonScanOptionLabel,
@@ -129,6 +135,9 @@ export function App() {
   const [trustedScanBaseline, setTrustedScanBaseline] = useState(EMPTY_TRUSTED_SCAN_BASELINE);
   const [trustedScanBaselineMutation, setTrustedScanBaselineMutation] = useState({ saving: false, error: "", success: "" });
   const [trustedScanBaselinePreview, setTrustedScanBaselinePreview] = useState(null);
+  const [reviewCheckpoints, setReviewCheckpoints] = useState(EMPTY_REVIEW_CHECKPOINTS);
+  const [reviewCheckpointMutation, setReviewCheckpointMutation] = useState({ saving: false, error: "", success: "" });
+  const [reviewCheckpointPreview, setReviewCheckpointPreview] = useState(null);
   const [notes, setNotes] = useState([]);
   const [noteBody, setNoteBody] = useState("");
   const [changelog, setChangelog] = useState([]);
@@ -173,6 +182,8 @@ export function App() {
     scanComparison: 0,
     trustedScanBaseline: 0,
     trustedScanBaselineMutation: 0,
+    reviewCheckpoints: 0,
+    reviewCheckpointMutation: 0,
     agentsExists: 0,
     scanMutation: 0,
     noteMutation: 0,
@@ -264,6 +275,7 @@ export function App() {
       loadActivity(selectedPath, generation, controller.signal),
       loadComparisonOptions(selectedPath, generation, controller.signal),
       loadTrustedScanBaseline(selectedPath, generation, controller.signal),
+      loadReviewCheckpoints(selectedPath, generation, controller.signal),
       checkAgentsExists(selectedPath, generation, controller.signal),
     ]).then(() => {
       if (!controller.signal.aborted && projectRequestIsCurrent(selectedPath, generation)) {
@@ -340,6 +352,9 @@ export function App() {
     setTrustedScanBaseline(EMPTY_TRUSTED_SCAN_BASELINE);
     setTrustedScanBaselineMutation({ saving: false, error: "", success: "" });
     setTrustedScanBaselinePreview(null);
+    setReviewCheckpoints(EMPTY_REVIEW_CHECKPOINTS);
+    setReviewCheckpointMutation({ saving: false, error: "", success: "" });
+    setReviewCheckpointPreview(null);
     setNotes([]);
     setNoteBody("");
     setCopyStatus("");
@@ -669,6 +684,7 @@ export function App() {
         await loadActivity(projectPath, generation);
         await loadComparisonOptions(projectPath, generation);
         await loadTrustedScanBaseline(projectPath, generation);
+        loadReviewCheckpoints(projectPath, generation);
       }
       if (workspaceGenerationRef.current === workspaceGeneration) {
         await refreshProjects(projectPath, generation);
@@ -745,6 +761,7 @@ export function App() {
       if (!scopedProjectRequestIsCurrent("trustedBaselineMutation", requestId, projectPath, generation)) return;
       await loadScanHistory(projectPath, generation, controller.signal);
       if (!scopedProjectRequestIsCurrent("trustedBaselineMutation", requestId, projectPath, generation)) return;
+      loadReviewCheckpoints(projectPath, generation, controller.signal);
       if (data.activity_recorded) {
         await loadActivity(projectPath, generation, controller.signal);
         if (!scopedProjectRequestIsCurrent("trustedBaselineMutation", requestId, projectPath, generation)) return;
@@ -808,6 +825,31 @@ export function App() {
     } catch (error) {
       if (!isAbortError(error) && scopedProjectRequestIsCurrent("activity", requestId, path, generation)) {
         setActivity((current) => ({ ...current, loading: false, error: error.message }));
+      }
+    }
+  }
+
+  async function loadReviewCheckpoints(path, generation, signal) {
+    const requestId = beginScopedProjectRequest("reviewCheckpoints");
+    setReviewCheckpoints((current) => ({ ...current, loading: true, error: "" }));
+    try {
+      const data = await api(
+        `/api/review-checkpoints?project_path=${encodeURIComponent(path)}&limit=5&offset=0`,
+        { signal },
+      );
+      if (!scopedProjectRequestIsCurrent("reviewCheckpoints", requestId, path, generation)) return;
+      setReviewCheckpoints(normalizeReviewCheckpointPage(data));
+    } catch (error) {
+      if (!isAbortError(error) && scopedProjectRequestIsCurrent("reviewCheckpoints", requestId, path, generation)) {
+        setReviewCheckpoints({
+          ...EMPTY_REVIEW_CHECKPOINTS,
+          state: {
+            id: "indeterminate",
+            label: "Indeterminate",
+            reasons: ["Checkpoint evidence could not be loaded reliably."],
+          },
+          error: error.message,
+        });
       }
     }
   }
@@ -964,6 +1006,7 @@ export function App() {
       if (!scopedProjectRequestIsCurrent("trustedScanBaselineMutation", requestId, projectPath, generation)) return;
       setTrustedScanBaseline(normalizeTrustedScanBaseline(data));
       setTrustedScanBaselinePreview(null);
+      loadReviewCheckpoints(projectPath, generation);
       if (data.activity_recorded) {
         await loadActivity(projectPath, generation);
         if (!scopedProjectRequestIsCurrent("trustedScanBaselineMutation", requestId, projectPath, generation)) return;
@@ -980,6 +1023,65 @@ export function App() {
     } catch (error) {
       if (!isAbortError(error) && scopedProjectRequestIsCurrent("trustedScanBaselineMutation", requestId, projectPath, generation)) {
         setTrustedScanBaselineMutation({ saving: false, error: error.message, success: "" });
+      }
+    }
+  }
+
+  function requestReviewCheckpoint() {
+    const eligibility = reviewCheckpointEligibility(latestSecurityStatus, reviewCheckpoints);
+    if (!eligibility.eligible) {
+      setReviewCheckpointMutation({ saving: false, error: eligibility.reason, success: "" });
+      return;
+    }
+    const preview = buildReviewCheckpointPreview(selectedProject, reviewCheckpoints);
+    if (!preview) {
+      setReviewCheckpointMutation({
+        saving: false,
+        error: "Current checkpoint evidence cannot be previewed reliably.",
+        success: "",
+      });
+      return;
+    }
+    setReviewCheckpointPreview(preview);
+    setReviewCheckpointMutation({ saving: false, error: "", success: "" });
+  }
+
+  async function confirmReviewCheckpoint() {
+    const preview = reviewCheckpointPreview;
+    const projectPath = selectedPathRef.current;
+    const generation = projectGenerationRef.current;
+    if (!preview || !projectPath) return;
+    const requestId = beginScopedProjectRequest("reviewCheckpointMutation");
+    setReviewCheckpointMutation({ saving: true, error: "", success: "" });
+    try {
+      const data = await api("/api/review-checkpoints", {
+        method: "POST",
+        body: {
+          project_path: projectPath,
+          scan_id: preview.scanId,
+          expected_evidence_fingerprint: preview.evidenceFingerprint,
+          security_status: "ready",
+          evaluator_version: preview.evaluatorVersion,
+          provenance: "manual",
+        },
+      });
+      if (!scopedProjectRequestIsCurrent("reviewCheckpointMutation", requestId, projectPath, generation)) return;
+      setReviewCheckpoints(normalizeReviewCheckpointPage(data));
+      setReviewCheckpointPreview(null);
+      if (data.activityRecorded) {
+        await loadActivity(projectPath, generation);
+        if (!scopedProjectRequestIsCurrent("reviewCheckpointMutation", requestId, projectPath, generation)) return;
+      }
+      setReviewCheckpointMutation({
+        saving: false,
+        error: "",
+        success: data.created
+          ? "Manual review checkpoint recorded."
+          : "The latest checkpoint is already current.",
+      });
+    } catch (error) {
+      if (!isAbortError(error) && scopedProjectRequestIsCurrent("reviewCheckpointMutation", requestId, projectPath, generation)) {
+        setReviewCheckpointMutation({ saving: false, error: error.message, success: "" });
       }
     }
   }
@@ -1027,6 +1129,7 @@ export function App() {
       }
       setTrustProfile(normalizeProjectExpectations(data));
       setTrustProfileMessage("Project Expectations saved.");
+      loadReviewCheckpoints(projectPath, generation);
       if (data.activity_recorded) await loadActivity(projectPath, generation);
     } catch (error) {
       if (!isAbortError(error) && scopedProjectRequestIsCurrent("trustSave", requestId, projectPath, generation)) {
@@ -1088,6 +1191,7 @@ export function App() {
       if (!findingReviewRequestIsCurrent(fingerprint, requestId, projectPath, generation)) return;
       applyFindingReview(fingerprint, data.review);
       setFindingReviewState((current) => ({ ...current, [fingerprint]: { saving: false, error: "", success: "Review saved." } }));
+      loadReviewCheckpoints(projectPath, generation);
       if (data.activity_recorded) await loadActivity(projectPath, generation);
     } catch (error) {
       if (!findingReviewRequestIsCurrent(fingerprint, requestId, projectPath, generation)) return;
@@ -1111,6 +1215,7 @@ export function App() {
       if (!findingReviewRequestIsCurrent(fingerprint, requestId, projectPath, generation)) return;
       applyFindingReview(fingerprint, null);
       setFindingReviewState((current) => ({ ...current, [fingerprint]: { saving: false, error: "", success: "Finding reopened." } }));
+      loadReviewCheckpoints(projectPath, generation);
     } catch (error) {
       if (!findingReviewRequestIsCurrent(fingerprint, requestId, projectPath, generation)) return;
       setFindingReviewState((current) => ({ ...current, [fingerprint]: { saving: false, error: error.message, success: "" } }));
@@ -1436,6 +1541,9 @@ export function App() {
             <>
               <ProjectSecurityStatus
                 value={latestSecurityStatus}
+                checkpoints={reviewCheckpoints}
+                checkpointMutation={reviewCheckpointMutation}
+                onRecordCheckpoint={requestReviewCheckpoint}
                 onAction={handleSecurityStatusAction}
               />
               {!dismissedGuidedReviews.includes(selectedPath) ? (
@@ -1593,6 +1701,14 @@ export function App() {
           onCancel={() => setTrustedScanBaselinePreview(null)}
         />
       ) : null}
+      {reviewCheckpointPreview ? (
+        <ReviewCheckpointConfirmation
+          value={reviewCheckpointPreview}
+          saving={reviewCheckpointMutation.saving}
+          onConfirm={confirmReviewCheckpoint}
+          onCancel={() => setReviewCheckpointPreview(null)}
+        />
+      ) : null}
     </main>
   );
 }
@@ -1635,7 +1751,13 @@ function GuidedReviewChecklist({ state, securityStatus, isScanning, onRunScan, o
   );
 }
 
-function ProjectSecurityStatus({ value, onAction }) {
+function ProjectSecurityStatus({
+  value,
+  checkpoints,
+  checkpointMutation,
+  onRecordCheckpoint,
+  onAction,
+}) {
   return (
     <section className={`project-security-status security-status-${value.status}`} aria-labelledby="project-security-status-title">
       <div className="project-security-status-heading">
@@ -1655,6 +1777,13 @@ function ProjectSecurityStatus({ value, onAction }) {
           </div>
         </dl>
       </div>
+      <ReviewCheckpointSection
+        securityStatus={value}
+        value={checkpoints}
+        mutation={checkpointMutation}
+        onRecord={onRecordCheckpoint}
+        onOpenReview={() => onAction({ destination: "reports" })}
+      />
       <div className="project-security-evidence">
         {value.sections.map((item) => (
           <article className={`security-evidence security-evidence-${statusClass(item.status)}`} key={item.id}>
@@ -1692,6 +1821,120 @@ function ProjectSecurityStatus({ value, onAction }) {
       <p className="project-security-disclaimer">{value.disclaimer}</p>
     </section>
   );
+}
+
+function ReviewCheckpointSection({
+  securityStatus,
+  value,
+  mutation,
+  onRecord,
+  onOpenReview,
+}) {
+  const eligibility = reviewCheckpointEligibility(securityStatus, value);
+  const latest = value.history[0] || null;
+  return (
+    <section className={`review-checkpoint review-checkpoint-${value.state.id}`} aria-labelledby="review-checkpoint-title">
+      <div className="review-checkpoint-heading">
+        <div>
+          <span className="guided-review-eyebrow">Review checkpoint</span>
+          <h3 id="review-checkpoint-title">{value.state.label}</h3>
+          <p>A checkpoint records a manual review of exact local evidence. It is not approval, certification, or a security guarantee.</p>
+        </div>
+        {latest ? (
+          <dl>
+            <div>
+              <dt>Recorded</dt>
+              <dd>{formatDate(latest.createdAt)}</dd>
+            </div>
+            <div>
+              <dt>Scan</dt>
+              <dd>{latest.scanId ? `#${latest.scanId}` : "Indeterminate"}</dd>
+            </div>
+          </dl>
+        ) : null}
+      </div>
+      {value.loading ? <p className="muted">Loading checkpoint evidence...</p> : null}
+      <ul className="review-checkpoint-reasons">
+        {value.state.reasons.map((reason) => <li key={reason}>{reason}</li>)}
+      </ul>
+      {latest ? (
+        <div className="review-checkpoint-history">
+          <strong>Recent checkpoint history</strong>
+          <ol>
+            {value.history.map((checkpoint) => (
+              <li key={checkpoint.checkpointId}>
+                <span>{formatDate(checkpoint.createdAt)}</span>
+                <span>{checkpoint.scanId ? `Scan #${checkpoint.scanId}` : "Scan indeterminate"}</span>
+                <span>{checkpoint.malformed ? "Indeterminate record" : "Manual review record"}</span>
+              </li>
+            ))}
+          </ol>
+          {value.hasMore ? <small>Showing the newest {value.history.length} checkpoints.</small> : null}
+        </div>
+      ) : null}
+      <div className="review-checkpoint-actions">
+        {eligibility.eligible ? (
+          <button type="button" className="secondary-button compact-action" onClick={onRecord}>
+            Record reviewed checkpoint
+          </button>
+        ) : null}
+        {value.state.id === "review-required" ? (
+          <button type="button" className="tertiary-button compact-action" onClick={onOpenReview}>
+            Review current evidence
+          </button>
+        ) : null}
+        {!eligibility.eligible && value.state.id !== "current" ? <small>{eligibility.reason}</small> : null}
+        {value.state.id === "current" ? <small>The current evidence is already represented; no duplicate checkpoint is needed.</small> : null}
+      </div>
+      {value.error ? <p className="form-message error">{value.error}</p> : null}
+      {mutation.error ? <p className="form-message error">{mutation.error}</p> : null}
+      {mutation.success ? <p className="form-message success">{mutation.success}</p> : null}
+    </section>
+  );
+}
+
+function ReviewCheckpointConfirmation({ value, saving, onConfirm, onCancel }) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal-panel review-checkpoint-confirmation" role="dialog" aria-modal="true" aria-labelledby="review-checkpoint-confirmation-title">
+        <div className="panel-heading">
+          <div>
+            <h2 id="review-checkpoint-confirmation-title">Record reviewed checkpoint</h2>
+            <p className="muted">Confirm the exact normalized evidence reviewed manually. This creates an immutable audit record, not a security guarantee or permission to execute code.</p>
+          </div>
+          <button type="button" className="tertiary-button modal-close" onClick={onCancel} disabled={saving}>Cancel</button>
+        </div>
+        <div className="review-checkpoint-preview-grid">
+          <PreviewFact label="Project" value={`${value.projectName} · ${value.projectId}`} />
+          <PreviewFact label="Latest scan" value={`#${value.scanId} · ${formatDate(value.scanTimestamp)}`} />
+          <PreviewFact label="Baseline" value={checkpointBaselineLabel(value)} />
+          <PreviewFact label="Project Expectations" value={abbreviateCheckpointFingerprint(value.expectationsFingerprint)} />
+          <PreviewFact label="Dependency analysis" value={abbreviateCheckpointFingerprint(value.dependencyAnalysisFingerprint)} />
+          <PreviewFact label="Dependency approval" value={`${value.dependencyApprovalState} · ${abbreviateCheckpointFingerprint(value.dependencyApprovalFingerprint)}`} />
+          <PreviewFact label="Finding review" value={`${value.reviewedFindingCount}/${value.findingCount} reviewed · ${value.unresolvedCriticalCount} critical · ${value.unresolvedHighCount} high requiring action`} />
+          <PreviewFact label="Coverage and metadata" value={`${value.coverageComplete ? "Complete" : "Incomplete"} · ${value.coverageIssueCount} gaps · metadata ${value.metadataReliable ? "reliable" : "indeterminate"}`} />
+          <PreviewFact label="Evaluator" value={`Security status evaluator v${value.evaluatorVersion}`} />
+          <PreviewFact label="Evidence identity" value={abbreviateCheckpointFingerprint(value.evidenceFingerprint)} />
+        </div>
+        <div className="modal-actions review-checkpoint-confirmation-actions">
+          <button type="button" className="tertiary-button" onClick={onCancel} disabled={saving}>Cancel</button>
+          <button type="button" className="primary-button" onClick={onConfirm} disabled={saving}>
+            {saving ? "Recording..." : "Confirm manual review checkpoint"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function checkpointBaselineLabel(value) {
+  if (!value.baselineScanId) return "No baseline · change-over-time evidence remains limited";
+  return `${value.baselineProvenance} · Scan #${value.baselineScanId}`;
+}
+
+function abbreviateCheckpointFingerprint(value) {
+  if (!value) return "Not configured";
+  return value.length > 22 ? `${value.slice(0, 12)}…${value.slice(-8)}` : value;
 }
 
 function securityCountLabel(value) {

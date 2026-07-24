@@ -2,6 +2,16 @@ from __future__ import annotations
 
 CHANGELOG_ENTRIES = [
     {
+        "version": "0.6.8",
+        "title": "Project review checkpoints",
+        "changes": [
+            "Added immutable project-scoped checkpoints for manually reviewed evidence when Project Security Status is exactly Ready for reviewed work.",
+            "Added conservative Current, Review required, Indeterminate, and No checkpoint states over normalized scan, baseline, expectation, dependency, finding-review, coverage, and metadata identities.",
+            "Added an explicit evidence preview, bounded read-only checkpoint history, duplicate prevention, and one atomic project activity event per successful checkpoint.",
+            "Kept checkpoints separate from approvals, risk acceptance, remediation, project trust, and any permission to execute project code.",
+        ],
+    },
+    {
         "version": "0.6.7",
         "title": "Project security status summary",
         "changes": [

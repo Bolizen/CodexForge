@@ -111,3 +111,14 @@ class TrustedScanBaselineSet(ProjectPathRequest):
 
     class Config:
         extra = "forbid"
+
+
+class ReviewCheckpointCreate(ProjectPathRequest):
+    scan_id: int = Field(gt=0)
+    expected_evidence_fingerprint: str = Field(min_length=69, max_length=69)
+    security_status: Literal["ready"]
+    evaluator_version: Literal[1] = 1
+    provenance: Literal["manual"] = "manual"
+
+    class Config:
+        extra = "forbid"

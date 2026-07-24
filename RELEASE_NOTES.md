@@ -1,6 +1,15 @@
-# Glacial 0.6.7 Project Security Status Summary
+# Glacial 0.6.8 Project Review Checkpoints
 
-Glacial 0.6.7 adds a compact, conservative decision-support summary answering whether the current persisted project evidence is sufficiently reviewed for cautious work.
+Glacial 0.6.8 adds immutable, project-scoped audit records for explicitly recording manual review of the exact current security evidence.
+
+## Project review checkpoints
+
+- Allows recording a checkpoint only when the canonical Project Security Status is exactly Ready for reviewed work.
+- Captures bounded normalized identities for the latest scan, baseline provenance, Project Expectations, dependency analysis and approval, finding review, coverage, metadata reliability, and evaluator/schema versions.
+- Derives explicit Current, Review required, Indeterminate, and No checkpoint states, with any newer scan requiring a new manual review.
+- Prevents identical duplicate checkpoints and writes exactly one activity event atomically with each successfully created checkpoint.
+- Shows a compact confirmation preview and bounded newest-first history without adding edit, delete, override, remediation, or certification behavior.
+- Keeps checkpoint calculation and viewing read-only; checkpoints do not mutate scans, findings, review decisions, severity, raw risk, dependencies, expectations, baselines, coverage, or project trust.
 
 ## Project security status summary
 

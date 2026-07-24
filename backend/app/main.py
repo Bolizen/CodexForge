@@ -49,7 +49,13 @@ from .scan_comparison import (
     comparison_options_page,
     trusted_scan_eligibility,
 )
-from .schemas import AgentPreviewRequest, FindingReviewDelete, FindingReviewRequest, NoteCreate, ProjectCreate, ProjectMetadataUpdate, ProjectPathRequest, ProjectRegister, ProjectRootUpdate, TrustProfileRequest, TrustedDependencyBaselineApprove, TrustedDependencyBaselineNote, TrustedScanBaselineSet
+from .review_checkpoints import (
+    MAX_CHECKPOINT_OFFSET,
+    MAX_CHECKPOINT_PAGE_SIZE,
+    checkpoint_page,
+    create_checkpoint,
+)
+from .schemas import AgentPreviewRequest, FindingReviewDelete, FindingReviewRequest, NoteCreate, ProjectCreate, ProjectMetadataUpdate, ProjectPathRequest, ProjectRegister, ProjectRootUpdate, ReviewCheckpointCreate, TrustProfileRequest, TrustedDependencyBaselineApprove, TrustedDependencyBaselineNote, TrustedScanBaselineSet
 from .trusted_dependency_baseline import BASELINE_SCHEMA_VERSION, BaselineError, approval_for_analysis, enrich_scan as enrich_trusted_baseline, public_baseline, snapshot_from_analysis, snapshot_json, valid_fingerprint as valid_baseline_fingerprint
 from .trusted_scan_baseline import PROVENANCE_MANUAL, trusted_scan_baseline_state
 
@@ -270,6 +276,7 @@ def unregister_project(payload: ProjectPathRequest) -> dict[str, object]:
         if not row:
             raise HTTPException(status_code=404, detail="Project registration was not found.")
         connection.execute("DELETE FROM trusted_scan_baselines WHERE project_id = ?", (path,))
+        connection.execute("DELETE FROM project_review_checkpoints WHERE project_id = ?", (path,))
         connection.execute("DELETE FROM scans WHERE project_path = ?", (path,))
         connection.execute("DELETE FROM notes WHERE project_path = ?", (path,))
         connection.execute("DELETE FROM project_trust_profiles WHERE project_path = ?", (path,))
@@ -484,6 +491,39 @@ def project_activity(
             project_id=str(project),
             limit=limit,
             offset=offset,
+        )
+
+
+@app.get("/api/review-checkpoints")
+def review_checkpoints(
+    project_path: str = Query(min_length=1, max_length=1000),
+    limit: Annotated[int, Query(ge=1, le=MAX_CHECKPOINT_PAGE_SIZE)] = 5,
+    offset: Annotated[int, Query(ge=0, le=MAX_CHECKPOINT_OFFSET)] = 0,
+) -> dict[str, object]:
+    project = _ensure_project(project_path)
+    with get_connection() as connection:
+        return checkpoint_page(
+            connection,
+            project_id=str(project),
+            limit=limit,
+            offset=offset,
+        )
+
+
+@app.post("/api/review-checkpoints")
+def record_review_checkpoint(payload: ReviewCheckpointCreate) -> dict[str, object]:
+    project = _ensure_project(payload.project_path)
+    with get_connection() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        return create_checkpoint(
+            connection,
+            project_id=str(project),
+            scan_id=payload.scan_id,
+            expected_evidence_fingerprint=payload.expected_evidence_fingerprint,
+            security_status=payload.security_status,
+            evaluator_version=payload.evaluator_version,
+            provenance=payload.provenance,
+            created_at=_now(),
         )
 
 

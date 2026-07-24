@@ -17,6 +17,7 @@ EVENT_DEPENDENCY_REVIEW_COMPLETED = "dependency_review_completed"
 EVENT_TRUSTED_SCAN_BASELINE_SET = "trusted_scan_baseline_set"
 EVENT_TRUSTED_SCAN_BASELINE_REPLACED = "trusted_scan_baseline_replaced"
 EVENT_TRUSTED_SCAN_BASELINE_CLEARED = "trusted_scan_baseline_cleared"
+EVENT_REVIEW_CHECKPOINT_CREATED = "review_checkpoint_created"
 KNOWN_STORED_EVENT_TYPES = {
     EVENT_PROJECT_EXPECTATIONS_UPDATED,
     EVENT_OBSERVED_DRIFT_ADOPTED,
@@ -25,6 +26,7 @@ KNOWN_STORED_EVENT_TYPES = {
     EVENT_TRUSTED_SCAN_BASELINE_SET,
     EVENT_TRUSTED_SCAN_BASELINE_REPLACED,
     EVENT_TRUSTED_SCAN_BASELINE_CLEARED,
+    EVENT_REVIEW_CHECKPOINT_CREATED,
 }
 MAX_ACTIVITY_PAGE_SIZE = 50
 MAX_ACTIVITY_OFFSET = 1000
@@ -295,6 +297,23 @@ def _load_details(value: object, event_type: str) -> tuple[dict[str, object], bo
             details["newBaselineScanDate"] = new_date
         required_id = prior_id if event_type == EVENT_TRUSTED_SCAN_BASELINE_CLEARED else new_id
         return (details, False) if required_id else ({}, True)
+    if event_type == EVENT_REVIEW_CHECKPOINT_CREATED:
+        checkpoint_id = bounded.get("checkpointId")
+        evaluator_version = bounded.get("evaluatorVersion")
+        provenance = bounded.get("provenance")
+        if (
+            not isinstance(checkpoint_id, str)
+            or not checkpoint_id
+            or not isinstance(evaluator_version, int)
+            or evaluator_version <= 0
+            or provenance != "manual"
+        ):
+            return {}, True
+        return {
+            "checkpointId": checkpoint_id,
+            "evaluatorVersion": evaluator_version,
+            "provenance": provenance,
+        }, False
     return {}, True
 
 

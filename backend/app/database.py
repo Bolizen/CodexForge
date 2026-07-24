@@ -133,6 +133,36 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS project_activity_events_project_time
             ON project_activity_events (project_id, occurred_at DESC, event_id DESC);
+
+            CREATE TABLE IF NOT EXISTS project_review_checkpoints (
+                checkpoint_id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                scan_id INTEGER NOT NULL,
+                baseline_scan_id INTEGER,
+                baseline_provenance TEXT NOT NULL
+                    CHECK (baseline_provenance IN ('manual', 'automatic', 'none')),
+                expectations_fingerprint TEXT NOT NULL,
+                dependency_analysis_fingerprint TEXT NOT NULL,
+                dependency_approval_fingerprint TEXT NOT NULL DEFAULT '',
+                dependency_approval_state TEXT NOT NULL,
+                finding_reviews_fingerprint TEXT NOT NULL,
+                finding_review_complete INTEGER NOT NULL CHECK (finding_review_complete IN (0, 1)),
+                unresolved_critical_count INTEGER NOT NULL,
+                unresolved_high_count INTEGER NOT NULL,
+                coverage_fingerprint TEXT NOT NULL,
+                metadata_reliable INTEGER NOT NULL CHECK (metadata_reliable IN (0, 1)),
+                checkpoint_schema_version INTEGER NOT NULL,
+                evaluator_version INTEGER NOT NULL,
+                evidence_fingerprint TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                provenance TEXT NOT NULL DEFAULT 'manual'
+                    CHECK (provenance IN ('manual')),
+                FOREIGN KEY (scan_id) REFERENCES scans(id),
+                FOREIGN KEY (baseline_scan_id) REFERENCES scans(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS project_review_checkpoints_project_time
+            ON project_review_checkpoints (project_id, created_at DESC, checkpoint_id DESC);
             """
         )
         connection.execute(

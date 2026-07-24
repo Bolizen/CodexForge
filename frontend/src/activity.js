@@ -18,6 +18,7 @@ const EVENT_TITLES = {
   trusted_scan_baseline_set: "Trusted baseline set",
   trusted_scan_baseline_replaced: "Trusted baseline replaced",
   trusted_scan_baseline_cleared: "Trusted baseline cleared",
+  review_checkpoint_created: "Review checkpoint recorded",
 };
 
 export function normalizeActivityPage(value) {
@@ -80,6 +81,9 @@ export function activityDetail(event) {
   }
   if (event.eventType === "trusted_scan_baseline_cleared") {
     return `Trusted comparison baseline scan #${details.priorBaselineScanId} was cleared.`;
+  }
+  if (event.eventType === "review_checkpoint_created") {
+    return `Manual review checkpoint recorded for scan #${event.relatedScanId}. This is an audit record, not a security guarantee.`;
   }
   return "Stored activity details are unavailable. The underlying project data was not changed.";
 }
