@@ -1637,6 +1637,182 @@ pre {
   min-width: 0;
 }
 
+.project-security-status {
+  background: var(--color-surface-elevated);
+  border: 1px solid var(--color-border-strong);
+  border-left: 4px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+  padding: var(--space-5);
+}
+
+.security-status-blocked,
+.security-status-significant {
+  border-left-color: var(--color-danger);
+}
+
+.security-status-review,
+.security-status-insufficient {
+  border-left-color: var(--color-warning);
+}
+
+.security-status-ready {
+  border-left-color: var(--color-success);
+}
+
+.project-security-status-heading {
+  align-items: start;
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: minmax(0, 1fr) minmax(230px, 0.45fr);
+}
+
+.project-security-status-heading h2,
+.project-security-status-heading p,
+.project-security-status-heading dl,
+.project-security-disclaimer {
+  margin: 0;
+}
+
+.project-security-status-heading h2 {
+  font-size: 1.35rem;
+}
+
+.project-security-status-heading p,
+.security-evidence p,
+.security-evidence li,
+.project-security-disclaimer {
+  color: var(--color-text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.project-security-status-heading dl {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.project-security-status-heading dl > div {
+  background: var(--color-surface-inset);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  min-width: 0;
+  padding: var(--space-2);
+}
+
+.project-security-status-heading dt {
+  color: var(--color-text-muted);
+  font-size: 0.68rem;
+}
+
+.project-security-status-heading dd {
+  font-size: 0.78rem;
+  font-weight: 700;
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+}
+
+.project-security-evidence {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.security-evidence {
+  background: var(--color-surface-inset);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-sm);
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-3);
+}
+
+.security-evidence header {
+  align-items: flex-start;
+  display: flex;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.security-evidence h3 {
+  font-size: 0.82rem;
+  margin: 0;
+}
+
+.security-evidence header > span {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  flex: 0 0 auto;
+  font-size: 0.65rem;
+  font-weight: 700;
+  padding: 3px 5px;
+}
+
+.security-evidence p {
+  margin: 0;
+}
+
+.security-evidence-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+
+.security-evidence-counts span {
+  color: var(--color-text-muted);
+  font-size: 0.67rem;
+}
+
+.security-evidence-counts strong {
+  color: var(--color-text-primary);
+}
+
+.security-evidence ul {
+  margin: 0;
+  padding-left: 1rem;
+}
+
+.security-evidence li {
+  overflow-wrap: anywhere;
+}
+
+.security-evidence > button {
+  align-self: end;
+  justify-self: start;
+}
+
+.project-security-actions {
+  align-items: center;
+  border-top: 1px solid var(--color-border-subtle);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  justify-content: space-between;
+  padding-top: var(--space-3);
+}
+
+.project-security-actions > strong {
+  font-size: 0.8rem;
+}
+
+.project-security-actions > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.project-security-disclaimer {
+  font-weight: 650;
+}
+
+.guided-security-status {
+  margin-top: var(--space-2) !important;
+}
+
 .guided-review {
   background: linear-gradient(135deg, rgba(75, 186, 203, 0.1), rgba(255, 255, 255, 0.015));
   border: 1px solid rgba(75, 186, 203, 0.3);
@@ -4051,6 +4227,10 @@ label,
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
+  .project-security-evidence {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .overview-secondary-summary > div:nth-child(4n + 1) {
     border-left: 0;
   }
@@ -4454,6 +4634,30 @@ label,
   .first-scan-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .project-security-status-heading,
+  .project-security-evidence {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .project-security-status-heading dl {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .project-security-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .project-security-actions > div {
+    display: grid;
+  }
+
+  .project-security-actions button,
+  .security-evidence > button {
+    justify-self: stretch;
+    width: 100%;
   }
 
   .guided-review-dismiss {

@@ -1,6 +1,16 @@
-# Glacial 0.6.6 Trusted Scan Baseline Management
+# Glacial 0.6.7 Project Security Status Summary
 
-Glacial 0.6.6 adds a deliberate project-level reference for comparing the latest scan with one exact, reliable trusted scan.
+Glacial 0.6.7 adds a compact, conservative decision-support summary answering whether the current persisted project evidence is sufficiently reviewed for cautious work.
+
+## Project security status summary
+
+- Synthesizes only existing persisted scan, coverage, finding-review, dependency, Project Expectations, and baseline evidence without creating a score, approval, cache, or mutable status record.
+- Uses explicit conservative precedence: Blocked by incomplete scan, Insufficient evidence, Significant changes detected, Review required, then Ready for reviewed work.
+- Keeps Scan coverage, Findings, Dependencies, Project Expectations, Baseline and drift, and Review completion independently visible as Satisfied, Action required, Significant change, Indeterminate, or Not applicable.
+- Treats incomplete scans and malformed current evidence conservatively, never inferring resolved findings, removed dependencies, or absent drift from gaps.
+- Preserves trusted-baseline precedence and prominently reports unavailable explicit baselines without automatic fallback.
+- Shows no more than three prioritized state-specific actions, each navigating to an existing view and never running automatically.
+- Presents Ready for reviewed work only when all applicable current evidence is reliable and sufficiently reviewed; it remains explicitly not a guarantee of security.
 
 ## Trusted scan baseline management
 

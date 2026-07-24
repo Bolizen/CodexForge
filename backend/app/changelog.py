@@ -2,6 +2,16 @@ from __future__ import annotations
 
 CHANGELOG_ENTRIES = [
     {
+        "version": "0.6.7",
+        "title": "Project security status summary",
+        "changes": [
+            "Added a compact conservative work-readiness summary over existing persisted scan, review, dependency, expectation, and baseline evidence.",
+            "Added independent Scan coverage, Findings, Dependencies, Project Expectations, Baseline and drift, and Review completion evidence sections.",
+            "Prioritized incomplete scans and insufficient evidence before significant changes, remaining review work, or Ready for reviewed work.",
+            "Added up to three state-specific navigation actions without creating scores, approvals, activity events, cached status, or project-state writes.",
+        ],
+    },
+    {
         "version": "0.6.6",
         "title": "Trusted scan baseline management",
         "changes": [

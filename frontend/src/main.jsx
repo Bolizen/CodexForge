@@ -33,6 +33,7 @@ import {
   normalizeProjectExpectations,
 } from "./projectExpectations.js";
 import { buildProjectDriftSummary } from "./projectDrift.js";
+import { buildProjectSecurityStatus } from "./projectSecurityStatus.js";
 import {
   comparisonCountLabel,
   comparisonExampleLabel,
@@ -217,6 +218,21 @@ export function App() {
     completeness: latestProjectReport.completeness,
     dependencyTrust: latestProjectReport.dependencyTrust,
   }), [selectedProject, latestProjectScan, latestProjectReport]);
+  const latestSecurityStatus = useMemo(() => buildProjectSecurityStatus({
+    project: selectedProject,
+    scan: latestProjectScan,
+    scans: scanHistory,
+    report: latestProjectReport,
+    profile: trustProfile,
+    trustedBaseline: trustedScanBaseline,
+  }), [
+    selectedProject,
+    latestProjectScan,
+    scanHistory,
+    latestProjectReport,
+    trustProfile,
+    trustedScanBaseline,
+  ]);
   const displayedGuidedReview = useMemo(() => buildGuidedReviewState({
     project: selectedProject,
     scan: displayedScan,
@@ -1253,6 +1269,21 @@ export function App() {
     setMajorSectionOpen("scanReport", true);
   }
 
+  function handleSecurityStatusAction(value) {
+    if (!value) return;
+    if (value.destination === "workspace" && value.id === "run-scan") {
+      runScan();
+      return;
+    }
+    if (value.destination === "reports") {
+      openReports();
+      return;
+    }
+    if (["trustProfiles", "scanComparison", "activity", "workspace"].includes(value.destination)) {
+      setSelectedSection(value.destination);
+    }
+  }
+
   function openActivityScan(scanId) {
     if (!scanHistory.some((scan) => scan.id === scanId)) return;
     setSelectedScanId(scanId);
@@ -1403,9 +1434,14 @@ export function App() {
         <section className="content">
           {selectedSection === "workspace" && selectedProject && !projectDetailsLoading ? (
             <>
+              <ProjectSecurityStatus
+                value={latestSecurityStatus}
+                onAction={handleSecurityStatusAction}
+              />
               {!dismissedGuidedReviews.includes(selectedPath) ? (
                 <GuidedReviewChecklist
                   state={latestGuidedReview}
+                  securityStatus={latestSecurityStatus}
                   isScanning={isScanning}
                   onRunScan={runScan}
                   onOpenReports={openReports}
@@ -1561,7 +1597,7 @@ export function App() {
   );
 }
 
-function GuidedReviewChecklist({ state, isScanning, onRunScan, onOpenReports, onDismiss }) {
+function GuidedReviewChecklist({ state, securityStatus, isScanning, onRunScan, onOpenReports, onDismiss }) {
   const nextAction = !state.hasScan
     ? { label: isScanning ? "Scanning..." : "Run first scan", onClick: onRunScan, disabled: isScanning }
     : state.workflowComplete
@@ -1575,6 +1611,7 @@ function GuidedReviewChecklist({ state, isScanning, onRunScan, onOpenReports, on
           <span className="guided-review-eyebrow">First-project review</span>
           <h2 id="guided-review-title">Guided review checklist</h2>
           <p>{state.completedStepCount} of {state.steps.length} steps complete. Completion records review work; it does not prove the project safe.</p>
+          <p className="guided-security-status">Current security status: <strong>{securityStatus.label}</strong>. {securityStatus.interpretation}</p>
         </div>
         <button type="button" className="tertiary-button guided-review-dismiss" onClick={onDismiss}>Dismiss</button>
       </div>
@@ -1596,6 +1633,73 @@ function GuidedReviewChecklist({ state, isScanning, onRunScan, onOpenReports, on
       </div>
     </section>
   );
+}
+
+function ProjectSecurityStatus({ value, onAction }) {
+  return (
+    <section className={`project-security-status security-status-${value.status}`} aria-labelledby="project-security-status-title">
+      <div className="project-security-status-heading">
+        <div>
+          <span className="guided-review-eyebrow">Project security status</span>
+          <h2 id="project-security-status-title">{value.label}</h2>
+          <p>{value.interpretation}</p>
+        </div>
+        <dl>
+          <div>
+            <dt>Evidence timestamp</dt>
+            <dd>{formatDate(value.evidenceTimestamp)}</dd>
+          </div>
+          <div>
+            <dt>Baseline source</dt>
+            <dd>{value.baselineSource}</dd>
+          </div>
+        </dl>
+      </div>
+      <div className="project-security-evidence">
+        {value.sections.map((item) => (
+          <article className={`security-evidence security-evidence-${statusClass(item.status)}`} key={item.id}>
+            <header>
+              <h3>{item.label}</h3>
+              <span>{item.status}</span>
+            </header>
+            <p>{item.explanation}</p>
+            {Object.keys(item.counts).length ? (
+              <div className="security-evidence-counts">
+                {Object.entries(item.counts).map(([label, count]) => (
+                  <span key={label}><strong>{count === null ? "Indeterminate" : count}</strong> {securityCountLabel(label)}</span>
+                ))}
+              </div>
+            ) : null}
+            {item.examples.length ? <ul>{item.examples.map((example) => <li key={example}>{example}</li>)}</ul> : null}
+            <button type="button" className="tertiary-button compact-action" onClick={() => onAction({ destination: item.destination })}>
+              Open {item.label}
+            </button>
+          </article>
+        ))}
+      </div>
+      {value.actions.length ? (
+        <div className="project-security-actions">
+          <strong>Next useful actions</strong>
+          <div>
+            {value.actions.map((item) => (
+              <button type="button" className="secondary-button compact-action" onClick={() => onAction(item)} key={item.id}>
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      <p className="project-security-disclaimer">{value.disclaimer}</p>
+    </section>
+  );
+}
+
+function securityCountLabel(value) {
+  return String(value).replaceAll(/([A-Z])/g, " $1").toLowerCase();
+}
+
+function statusClass(value) {
+  return String(value || "indeterminate").toLowerCase().replaceAll(" ", "-");
 }
 
 function TrustedScanBaselineConfirmation({ value, saving, onConfirm, onCancel }) {
